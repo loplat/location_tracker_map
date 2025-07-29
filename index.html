@@ -203,6 +203,47 @@
             transform: translateX(24px);
         }
 
+        .tab-controls {
+            display: flex;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #e0e6ed;
+        }
+
+        .tab-btn {
+            padding: 10px 15px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            font-weight: 600;
+            color: #5f7d95;
+            position: relative;
+            transition: color 0.3s ease;
+        }
+
+        .tab-btn.active {
+            color: #667eea;
+        }
+
+        .tab-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
         .sheet-controls, .group-controls {
             display: flex;
             flex-direction: column;
@@ -340,12 +381,17 @@
                     <div class="column-selector">
                         <label for="groupColumn">🏷️ 그룹 기준 컬럼:</label>
                         <select id="groupColumn">
-                            <option value="">시트별 그룹</option>
+                            <option value="">없음</option>
                         </select>
                     </div>
 
-                    <div id="sheetControls" class="sheet-controls" style="display: none;"></div>
-                    <div id="groupControls" class="group-controls" style="display: none;"></div>
+                    <div class="tab-controls">
+                        <button class="tab-btn active" data-tab="sheets">📊 시트</button>
+                        <button class="tab-btn" data-tab="groups">🏷️ 그룹</button>
+                    </div>
+
+                    <div id="sheetControls" class="tab-content active"></div>
+                    <div id="groupControls" class="tab-content"></div>
                 </div>
             </div>
         </div>
@@ -361,6 +407,8 @@
         let showPaths = true;
         let currentGroupColumn = '';
         let allColumns = [];
+        let activeTab = 'sheets';
+        let selectedSheets = new Set();
 
         function isEmptyRow(row) { return !row || row.every(cell => !cell || cell.toString().trim() === ''); }
 
@@ -522,7 +570,7 @@
 
         function updateColumnSelector() {
             const select = document.getElementById('groupColumn');
-            select.innerHTML = '<option value="">시트별 그룹</option>';
+            select.innerHTML = '<option value="">없음</option>';
             allColumns.forEach(column => {
                 const option = document.createElement('option');
                 option.value = column;
@@ -531,9 +579,9 @@
             });
         }
 
-        function createGroupedData(columnName) {
+        function createGroupedData(columnName, sourceData) {
             const groupedData = {};
-            Object.entries(allData).forEach(([sheetName, sheetData]) => {
+            Object.entries(sourceData).forEach(([sheetName, sheetData]) => {
                 const headers = sheetData[0];
                 const columnIndex = headers.findIndex(h => h && h.toString() === columnName);
                 if (columnIndex === -1) return;
@@ -549,55 +597,56 @@
             return groupedData;
         }
 
-        function createControls() {
+        function createSheetControls() {
             const sheetControlsDiv = document.getElementById('sheetControls');
-            const groupControlsDiv = document.getElementById('groupControls');
+            sheetControlsDiv.innerHTML = '';
             
-            let dataToShow = currentGroupColumn ? createGroupedData(currentGroupColumn) : allData;
-            let isSheetMode = !currentGroupColumn;
-            
-            sheetControlsDiv.style.display = isSheetMode ? 'flex' : 'none';
-            groupControlsDiv.style.display = isSheetMode ? 'none' : 'flex';
-
-            const controlsDiv = isSheetMode ? sheetControlsDiv : groupControlsDiv;
-            controlsDiv.innerHTML = '';
-
-            const title = document.createElement('h4');
-            title.textContent = isSheetMode ? '📊 시트 선택:' : '🏷️ 그룹 선택:';
-            title.style.cssText = 'margin: 0 0 10px 0; font-size: 14px; color: #2c3e50;';
-            controlsDiv.appendChild(title);
-
-            Object.keys(dataToShow).forEach((name, index) => {
-                const color = isSheetMode ? colors[index % colors.length] : getColorForValue(name, index);
+            Object.keys(allData).forEach((sheetName, index) => {
+                const color = colors[index % colors.length];
                 const checkboxWrapper = document.createElement('div');
                 checkboxWrapper.className = 'checkbox-item';
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
-                checkbox.id = `item_${name.replace(/\s/g, '_')}_${index}`;
-                
-                // In sheet mode, only the first is checked. In group mode, all are checked.
-                checkbox.checked = !isSheetMode || index === 0;
+                checkbox.id = `sheet_${sheetName.replace(/\s/g, '_')}`;
+                checkbox.checked = selectedSheets.has(sheetName);
 
                 checkbox.addEventListener('change', function() {
                     if (this.checked) {
-                        processAndDisplayData(name, dataToShow[name], color, isSheetMode);
+                        selectedSheets.add(sheetName);
                     } else {
-                        if (mapLayers[name]) map.removeLayer(mapLayers[name]);
-                        if (pathLayers[name]) map.removeLayer(pathLayers[name]);
-                        delete mapLayers[name];
-                        delete pathLayers[name];
+                        selectedSheets.delete(sheetName);
                     }
+                    onGroupColumnChange(); // Refresh map and groups
                     clearPopup();
                 });
                 
                 const label = document.createElement('label');
                 label.htmlFor = checkbox.id;
-                label.textContent = name;
+                label.textContent = sheetName;
                 label.style.color = color;
                 label.style.fontWeight = '600';
                 
                 checkboxWrapper.append(checkbox, label);
-                controlsDiv.appendChild(checkboxWrapper);
+                sheetControlsDiv.appendChild(checkboxWrapper);
+            });
+        }
+
+        function createGroupControls(groupedData) {
+            const groupControlsDiv = document.getElementById('groupControls');
+            groupControlsDiv.innerHTML = '';
+
+            if (Object.keys(groupedData).length === 0) {
+                groupControlsDiv.textContent = '표시할 그룹이 없습니다. 시트를 선택해주세요.';
+                return;
+            }
+
+            Object.keys(groupedData).forEach((groupName, index) => {
+                const color = getColorForValue(groupName, index);
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                item.innerHTML = `<span style="width: 12px; height: 12px; background-color: ${color}; border-radius: 3px; display: inline-block;"></span>
+                                  <label style="color: ${color}; font-weight: 600;">${groupName}</label>`;
+                groupControlsDiv.appendChild(item);
             });
         }
 
@@ -612,7 +661,8 @@
             // 데이터 및 레이어 초기화
             Object.values(mapLayers).forEach(layer => map.removeLayer(layer));
             Object.values(pathLayers).forEach(layer => map.removeLayer(layer));
-            allData = {}; mapLayers = {}; pathLayers = {}; allColumns = []; currentGroupColumn = '';
+            allData = {}; mapLayers = {}; pathLayers = {}; allColumns = []; currentGroupColumn = ''; selectedSheets.clear();
+            document.getElementById('groupColumn').value = '';
             
             const data = results.data;
             
@@ -652,17 +702,102 @@
             });
 
             updateColumnSelector();
-            createControls(); // Creates checkboxes, first one checked
             
-            // Manually trigger display for the first sheet
             if (Object.keys(allData).length > 0) {
-                const firstSheetName = Object.keys(allData)[0];
-                const firstSheetData = allData[firstSheetName];
-                processAndDisplayData(firstSheetName, firstSheetData, colors[0 % colors.length], true);
+                selectedSheets.add(Object.keys(allData)[0]);
             }
+            
+            createSheetControls();
+            onGroupColumnChange(); // Centralized UI refresh
 
             document.getElementById('status').textContent = `${Object.keys(allData).length}개 시트 로드 완료.`;
             console.log('--- processParsedData 종료 ---');
+        }
+
+        function switchTab(tabId) {
+            activeTab = tabId;
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            const tabButton = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
+            if (tabButton) tabButton.classList.add('active');
+
+            const contentId = (tabId === 'sheets') ? 'sheetControls' : 'groupControls';
+            const contentElement = document.getElementById(contentId);
+            if (contentElement) contentElement.classList.add('active');
+        }
+
+        function displayDataAsGroups(groupColumn, sourceData) {
+            const allLocations = [];
+            const groupValues = new Set();
+            let tsIndex = -1, latIndex = -1, lngIndex = -1, groupIndex = -1;
+
+            // 1. Consolidate all data points into a single list
+            Object.values(sourceData).forEach(sheetData => {
+                const headers = sheetData[0];
+                if (tsIndex === -1) { // Find indices once
+                    tsIndex = headers.findIndex(h => h && h.toString().toLowerCase().replace(/\s/g, '').includes('ts_local'));
+                    latIndex = headers.findIndex(h => h && h.toString().toLowerCase().replace(/\s/g, '').includes('lat'));
+                    lngIndex = headers.findIndex(h => h && h.toString().toLowerCase().replace(/\s/g, '').includes('lng'));
+                    groupIndex = headers.findIndex(h => h && h.toString() === groupColumn);
+                }
+
+                if (tsIndex === -1 || latIndex === -1 || lngIndex === -1 || groupIndex === -1) return;
+
+                sheetData.slice(1).forEach((row, index) => {
+                    const groupValue = row[groupIndex] || 'Unknown';
+                    groupValues.add(groupValue);
+                    allLocations.push({
+                        timestamp: row[tsIndex],
+                        lat: parseFloat(row[latIndex]),
+                        lng: parseFloat(row[lngIndex]),
+                        group: groupValue,
+                        rawData: row,
+                        headers: headers,
+                        rowIndex: index + 2
+                    });
+                });
+            });
+
+            // 2. Sort all points chronologically
+            allLocations.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+            const layerGroup = L.layerGroup().addTo(map);
+            const pathLayerGroup = L.layerGroup().addTo(map);
+            mapLayers['groupedMarkers'] = layerGroup;
+            mapLayers['groupedPaths'] = pathLayerGroup;
+
+            // 3. Draw markers with group colors
+            allLocations.forEach(loc => {
+                if (isNaN(loc.lat) || isNaN(loc.lng)) return;
+                const color = getColorForValue(loc.group);
+                const marker = L.circleMarker([loc.lat, loc.lng], { radius: 8, fillColor: color, color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.8 });
+                
+                marker.on('mouseover', function(e) {
+                    clearPopup();
+                    const detailsHtml = loc.headers.map((header, idx) => 
+                        (loc.rawData[idx] && loc.rawData[idx].toString().trim()) ? `<div class="detail-row"><span class="label">${header}:</span><span class="value">${loc.rawData[idx]}</span></div>` : ''
+                    ).join('');
+                    const popupContent = `<div class="info-popup"><h4>📍 위치 정보 (Row ${loc.rowIndex})</h4>${detailsHtml}<div class="detail-row"><span class="label">그룹:</span><span class="value">${loc.group}</span></div></div>`;
+                    currentPopup = L.popup({ closeButton: false, className: 'info-popup' }).setLatLng(e.latlng).setContent(popupContent).openOn(map);
+                });
+                marker.on('mouseout', clearPopup);
+                layerGroup.addLayer(marker);
+            });
+
+            // 4. Draw path with segmented colors
+            for (let i = 0; i < allLocations.length - 1; i++) {
+                const start = allLocations[i];
+                const end = allLocations[i+1];
+                if (isNaN(start.lat) || isNaN(start.lng) || isNaN(end.lat) || isNaN(end.lng)) continue;
+
+                const color = getColorForValue(start.group);
+                const segmentCoords = [[start.lat, start.lng], [end.lat, end.lng]];
+                const polyline = L.polyline(segmentCoords, { color: color, weight: 4, opacity: 0.8 });
+                pathLayerGroup.addLayer(polyline);
+            }
+            
+            createGroupControls(Object.fromEntries(Array.from(groupValues).map(v => [v, []])));
         }
 
         function onGroupColumnChange() {
@@ -671,23 +806,22 @@
             Object.values(mapLayers).forEach(layer => map.removeLayer(layer));
             Object.values(pathLayers).forEach(layer => map.removeLayer(layer));
             mapLayers = {}; pathLayers = {}; clearPopup();
-            
-            createControls(); // Re-create controls based on new mode
+
+            const visibleSheetData = {};
+            selectedSheets.forEach(sheetName => {
+                if (allData[sheetName]) visibleSheetData[sheetName] = allData[sheetName];
+            });
 
             if (currentGroupColumn) {
-                const groupedData = createGroupedData(currentGroupColumn);
-                Object.entries(groupedData).forEach(([groupName, groupData], index) => {
-                    const color = getColorForValue(groupName, index);
-                    processAndDisplayData(groupName, groupData, color, false);
-                });
+                displayDataAsGroups(currentGroupColumn, visibleSheetData);
+                switchTab('groups');
             } else {
-                // Switched back to sheet mode, display first sheet
-                if (Object.keys(allData).length > 0) {
-                    const firstSheetName = Object.keys(allData)[0];
-                    const firstSheetData = allData[firstSheetName];
-                    const color = colors[0 % colors.length];
-                    processAndDisplayData(firstSheetName, firstSheetData, color, true);
-                }
+                createGroupControls({});
+                Object.entries(visibleSheetData).forEach(([sheetName, sheetData]) => {
+                    const colorIndex = Object.keys(allData).indexOf(sheetName);
+                    processAndDisplayData(sheetName, sheetData, colors[colorIndex % colors.length], true);
+                });
+                switchTab('sheets');
             }
         }
 
@@ -712,8 +846,8 @@
                         // 데이터 및 레이어 초기화
                         Object.values(mapLayers).forEach(layer => map.removeLayer(layer));
                         Object.values(pathLayers).forEach(layer => map.removeLayer(layer));
-                        allData = {}; mapLayers = {}; pathLayers = {}; allColumns = []; currentGroupColumn = '';
-                        document.getElementById('groupColumn').innerHTML = '<option value="">시트별 그룹</option>';
+                        allData = {}; mapLayers = {}; pathLayers = {}; allColumns = []; currentGroupColumn = ''; selectedSheets.clear();
+                        document.getElementById('groupColumn').value = '';
                         document.getElementById('sheetControls').innerHTML = '';
                         document.getElementById('groupControls').innerHTML = '';
 
@@ -730,15 +864,14 @@
                         });
                         
                         updateColumnSelector();
-                        createControls(); // This creates the checkboxes with only the first one checked
-
-                        // Manually trigger display for the first sheet
+                        
                         if (Object.keys(allData).length > 0) {
-                            const firstSheetName = Object.keys(allData)[0];
-                            const firstSheetData = allData[firstSheetName];
-                            processAndDisplayData(firstSheetName, firstSheetData, colors[0 % colors.length], true);
+                            selectedSheets.add(Object.keys(allData)[0]);
                         }
                         
+                        createSheetControls();
+                        onGroupColumnChange(); // Centralized UI refresh
+
                         document.getElementById('status').textContent = `${Object.keys(allData).length}개 시트 로드 완료.`;
                         
                     } catch (error) {
@@ -794,6 +927,10 @@
             document.getElementById('loadFromUrl').addEventListener('click', handleUrlLoad);
             document.getElementById('groupColumn').addEventListener('change', onGroupColumnChange);
             document.getElementById('pathToggle').addEventListener('click', togglePaths);
+            
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+            });
         });
     </script>
 </body>
