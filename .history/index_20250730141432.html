@@ -653,6 +653,8 @@
                     naverMap.fitBounds(bounds);
                 }
             };
+
+>>>>>>> e2e5b38 (Remove canvas renderer and fix XLSX sheet name loading)
             return mapProvider === 'osm' ? leafletApi : naverApi;
         }
 
@@ -838,28 +840,8 @@
             const sheetControlsDiv = document.getElementById('sheetControls');
             sheetControlsDiv.innerHTML = '';
             
-            Object.entries(allData).forEach(([sheetName, sheetData], index) => {
+            Object.keys(allData).forEach((sheetName, index) => {
                 const color = colors[index % colors.length];
-                const rowCount = sheetData.length - 1; // Subtract header row
-                
-                let totalDistance = 0;
-                if (rowCount > 1) {
-                    const headers = sheetData[0];
-                    const latIndex = findColumnIndex(headers, ['lat', 'latitude', '위도']);
-                    const lngIndex = findColumnIndex(headers, ['lng', 'longitude', '경도']);
-                    if (latIndex !== -1 && lngIndex !== -1) {
-                        for (let i = 1; i < sheetData.length - 1; i++) {
-                            const lat1 = parseFloat(sheetData[i][latIndex]);
-                            const lon1 = parseFloat(sheetData[i][lngIndex]);
-                            const lat2 = parseFloat(sheetData[i+1][latIndex]);
-                            const lon2 = parseFloat(sheetData[i+1][lngIndex]);
-                            if (!isNaN(lat1) && !isNaN(lon1) && !isNaN(lat2) && !isNaN(lon2)) {
-                                totalDistance += calculateDistance(lat1, lon1, lat2, lon2);
-                            }
-                        }
-                    }
-                }
-
                 const checkboxWrapper = document.createElement('div');
                 checkboxWrapper.className = 'checkbox-item';
                 const checkbox = document.createElement('input');
@@ -879,7 +861,7 @@
                 
                 const label = document.createElement('label');
                 label.htmlFor = checkbox.id;
-                label.textContent = `${sheetName} (${rowCount}건, ${totalDistance.toFixed(2)}km)`;
+                label.textContent = sheetName;
                 label.style.color = color;
                 label.style.fontWeight = '600';
                 
@@ -961,6 +943,8 @@
             allData = {}; mapLayers = {}; pathLayers = {}; allColumns = []; currentGroupColumns = []; selectedSheets.clear();
             document.getElementById('groupSelectors').innerHTML = '';
             
+            const data = parsedData;
+            
             function isHeaderRow(row) {
                 if (!row || row.length === 0) return false;
                 const lowerRow = row.map(cell => cell ? cell.toString().toLowerCase().replace(/[\s_]/g, '') : '');
@@ -996,6 +980,7 @@
                      allData['Sheet1'] = data.filter(row => !isEmptyRow(row));
                 }
             }
+>>>>>>> e2e5b38 (Remove canvas renderer and fix XLSX sheet name loading)
 
             Object.values(allData).forEach(sheetData => {
                 if (sheetData.length > 0) {
@@ -1164,6 +1149,21 @@
             }
         }
 
+        function parseAndLoadCsv(csvData) {
+            Papa.parse(csvData, {
+                header: false,
+                skipEmptyLines: true,
+                complete: (results) => {
+                    if (results.errors.length > 0) {
+                        console.warn('CSV 파싱 오류:', results.errors);
+                        document.getElementById('status').textContent = `파싱 오류: ${results.errors[0].message}`;
+                        return;
+                    }
+                    processLoadedData(results.data);
+                }
+            });
+        }
+
         function handleFileSelect(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -1192,28 +1192,17 @@
                         });
                         processLoadedData({ data: sheetData, isXlsx: true });
                     } catch (error) {
+>>>>>>> e2e5b38 (Remove canvas renderer and fix XLSX sheet name loading)
                         console.error('XLSX 처리 중 심각한 오류 발생:', error);
                         document.getElementById('status').textContent = `오류: XLSX 파일을 처리할 수 없습니다. (${error.message})`;
                     }
                 };
                 reader.readAsArrayBuffer(file);
             } else {
-                reader.onload = (e) => {
-                    Papa.parse(e.target.result, {
-                        header: false,
-                        skipEmptyLines: true,
-                        complete: (results) => {
-                            if (results.errors.length > 0) {
-                                console.warn('CSV 파싱 오류:', results.errors);
-                                document.getElementById('status').textContent = `파싱 오류: ${results.errors[0].message}`;
-                                return;
-                            }
-                            processLoadedData({ data: results.data, isXlsx: false });
-                        }
-                    });
-                };
+                reader.onload = (e) => processLoadedData({ data: parseAndLoadCsv(e.target.result), isXlsx: false });
                 reader.readAsText(file, 'UTF-8');
             }
+        }
         }
 
         function handleUrlLoad() {
@@ -1241,7 +1230,7 @@
                         document.getElementById('status').textContent = `파싱 오류: ${results.errors[0].message}`;
                         return;
                     }
-                    processLoadedData({ data: results.data, isXlsx: false });
+                    processLoadedData(results.data);
                 },
                 error: (err) => {
                     document.getElementById('status').textContent = 'URL 로드 오류';

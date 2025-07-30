@@ -381,13 +381,17 @@
                     </div>
 
                     <div class="toggle-section">
+                        <span>고성능 렌더링 (Canvas)</span>
+                        <div class="toggle-switch" id="canvasRenderToggle"></div>
+                    </div>
+                    
+                    <div class="toggle-section">
                         <span>경로 표시</span>
                         <div class="toggle-switch active" id="pathToggle"></div>
                     </div>
 
-
                     <div id="groupingContainer">
-                        <label for="group-selector-0">🏷️ 그룹 기준</label>
+                        <label>🏷️ 그룹 기준</label>
                         <div id="groupSelectors">
                             <!-- 동적 그룹 선택자 추가될 위치 -->
                         </div>
@@ -417,6 +421,7 @@
         let currentPopup = null;
         let showPaths = true;
         let currentGroupColumns = [];
+        let useCanvasRenderer = false;
         let allColumns = [];
         let activeTab = 'sheets';
         let selectedSheets = new Set();
@@ -653,6 +658,7 @@
                     naverMap.fitBounds(bounds);
                 }
             };
+
             return mapProvider === 'osm' ? leafletApi : naverApi;
         }
 
@@ -731,34 +737,28 @@
 
             if (locations.length === 0) return;
 
-            const layerGroup = [];
-            const pathLayerGroup = [];
+            const layerGroup = []; // 마커 저장
+            const pathLayerGroup = []; // 경로 저장
             mapLayers[groupName] = layerGroup;
             pathLayers[groupName] = pathLayerGroup;
 
             const mapApi = getMapApi();
 
-            // 1. Draw markers first
-            locations.forEach((location) => {
+            if (locations.length > 1) {
+                const path = mapApi.createPath(locations, color);
+                pathLayerGroup.push(...path);
+
+                if (showPaths) {
+                    mapApi.addLayers(path);
+                }
+            }
+
+            locations.forEach((location, index) => {
                 const marker = mapApi.createMarker(location, color, groupName);
                 layerGroup.push(marker);
             });
+            
             mapApi.addLayers(layerGroup);
-
-            // 2. Draw paths (especially for Naver map, this can be deferred)
-            const drawPaths = () => {
-                if (locations.length > 1 && showPaths) {
-                    const path = mapApi.createPath(locations, color);
-                    pathLayerGroup.push(...path);
-                    mapApi.addLayers(path);
-                }
-            };
-
-            if (mapProvider === 'naver') {
-                setTimeout(drawPaths, 100); // Defer path drawing slightly
-            } else {
-                drawPaths();
-            }
 
             if (Object.keys(allData).filter(k => selectedSheets.has(k)).length === 1) {
                 mapApi.fitBounds(locations);
@@ -838,28 +838,8 @@
             const sheetControlsDiv = document.getElementById('sheetControls');
             sheetControlsDiv.innerHTML = '';
             
-            Object.entries(allData).forEach(([sheetName, sheetData], index) => {
+            Object.keys(allData).forEach((sheetName, index) => {
                 const color = colors[index % colors.length];
-                const rowCount = sheetData.length - 1; // Subtract header row
-                
-                let totalDistance = 0;
-                if (rowCount > 1) {
-                    const headers = sheetData[0];
-                    const latIndex = findColumnIndex(headers, ['lat', 'latitude', '위도']);
-                    const lngIndex = findColumnIndex(headers, ['lng', 'longitude', '경도']);
-                    if (latIndex !== -1 && lngIndex !== -1) {
-                        for (let i = 1; i < sheetData.length - 1; i++) {
-                            const lat1 = parseFloat(sheetData[i][latIndex]);
-                            const lon1 = parseFloat(sheetData[i][lngIndex]);
-                            const lat2 = parseFloat(sheetData[i+1][latIndex]);
-                            const lon2 = parseFloat(sheetData[i+1][lngIndex]);
-                            if (!isNaN(lat1) && !isNaN(lon1) && !isNaN(lat2) && !isNaN(lon2)) {
-                                totalDistance += calculateDistance(lat1, lon1, lat2, lon2);
-                            }
-                        }
-                    }
-                }
-
                 const checkboxWrapper = document.createElement('div');
                 checkboxWrapper.className = 'checkbox-item';
                 const checkbox = document.createElement('input');
@@ -879,7 +859,7 @@
                 
                 const label = document.createElement('label');
                 label.htmlFor = checkbox.id;
-                label.textContent = `${sheetName} (${rowCount}건, ${totalDistance.toFixed(2)}km)`;
+                label.textContent = sheetName;
                 label.style.color = color;
                 label.style.fontWeight = '600';
                 
@@ -911,13 +891,12 @@
                     summary.style.gap = '8px';
                     summary.style.cursor = 'pointer';
 
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.id = `group-checkbox-${currentFullKey.replace(/[^a-zA-Z0-9]/g, '-')}`; // Create a unique ID
-            checkbox.checked = selectedGroups.has(currentFullKey);
-            checkbox.dataset.key = currentFullKey;
-            
-            checkbox.addEventListener('change', (e) => {
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.checked = selectedGroups.has(currentFullKey);
+                    checkbox.dataset.key = currentFullKey;
+                    
+                    checkbox.addEventListener('change', (e) => {
                         const isChecked = e.target.checked;
                         const key = e.target.dataset.key;
                         const childCheckboxes = details.querySelectorAll('input[type="checkbox"]');
@@ -961,6 +940,8 @@
             allData = {}; mapLayers = {}; pathLayers = {}; allColumns = []; currentGroupColumns = []; selectedSheets.clear();
             document.getElementById('groupSelectors').innerHTML = '';
             
+            const data = parsedData;
+            
             function isHeaderRow(row) {
                 if (!row || row.length === 0) return false;
                 const lowerRow = row.map(cell => cell ? cell.toString().toLowerCase().replace(/[\s_]/g, '') : '');
@@ -972,29 +953,24 @@
                 return (hasCombinedTimestamp || (hasDate && hasTime)) && hasLat && hasLng;
             }
             
-            if (parsedData.isXlsx) {
-                allData = parsedData.data;
+            const headerIndices = data.map((row, i) => isHeaderRow(row) ? i : -1).filter(i => i !== -1);
+            
+            if (headerIndices.length === 0) {
+                allData['Sheet1'] = data.filter(row => !isEmptyRow(row));
             } else {
-                const data = parsedData.data;
-                const headerIndices = data.map((row, i) => isHeaderRow(row) ? i : -1).filter(i => i !== -1);
-                
-                if (headerIndices.length === 0) {
-                    allData['Sheet1'] = data.filter(row => !isEmptyRow(row));
-                } else {
-                    for (let i = 0; i < headerIndices.length; i++) {
-                        const startIndex = headerIndices[i];
-                        const endIndex = (i < headerIndices.length - 1) ? headerIndices[i + 1] : data.length;
-                        let sheetData = data.slice(startIndex, endIndex).filter(row => !isEmptyRow(row));
-                        if (sheetData.length > 1) {
-                            const sheetName = `Sheet${i + 1}`;
-                            allData[sheetName] = sheetData;
-                        }
+                for (let i = 0; i < headerIndices.length; i++) {
+                    const startIndex = headerIndices[i];
+                    const endIndex = (i < headerIndices.length - 1) ? headerIndices[i + 1] : data.length;
+                    let sheetData = data.slice(startIndex, endIndex).filter(row => !isEmptyRow(row));
+                    if (sheetData.length > 1) {
+                        const sheetName = `Sheet${i + 1}`;
+                        allData[sheetName] = sheetData;
                     }
                 }
+            }
 
-                if (Object.keys(allData).length === 0 && data.length > 0) {
-                     allData['Sheet1'] = data.filter(row => !isEmptyRow(row));
-                }
+            if (Object.keys(allData).length === 0 && data.length > 0) {
+                 allData['Sheet1'] = data.filter(row => !isEmptyRow(row));
             }
 
             Object.values(allData).forEach(sheetData => {
@@ -1164,6 +1140,21 @@
             }
         }
 
+        function parseAndLoadCsv(csvData) {
+            Papa.parse(csvData, {
+                header: false,
+                skipEmptyLines: true,
+                complete: (results) => {
+                    if (results.errors.length > 0) {
+                        console.warn('CSV 파싱 오류:', results.errors);
+                        document.getElementById('status').textContent = `파싱 오류: ${results.errors[0].message}`;
+                        return;
+                    }
+                    processLoadedData(results.data);
+                }
+            });
+        }
+
         function handleFileSelect(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -1182,15 +1173,17 @@
                             return;
                         }
                         
-                        const sheetData = {};
-                        workbook.SheetNames.forEach(sheetName => {
+                        const combinedData = [];
+                        workbook.SheetNames.forEach((sheetName, i) => {
                             const worksheet = workbook.Sheets[sheetName];
                             const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-                            if (jsonData.length > 0) {
-                                sheetData[sheetName] = jsonData.filter(row => !isEmptyRow(row));
+                            if (i > 0) {
+                                // Add a separator or header row to distinguish sheets if needed
                             }
+                            combinedData.push(...jsonData);
                         });
-                        processLoadedData({ data: sheetData, isXlsx: true });
+                        processLoadedData(combinedData);
+                        
                     } catch (error) {
                         console.error('XLSX 처리 중 심각한 오류 발생:', error);
                         document.getElementById('status').textContent = `오류: XLSX 파일을 처리할 수 없습니다. (${error.message})`;
@@ -1198,21 +1191,8 @@
                 };
                 reader.readAsArrayBuffer(file);
             } else {
-                reader.onload = (e) => {
-                    Papa.parse(e.target.result, {
-                        header: false,
-                        skipEmptyLines: true,
-                        complete: (results) => {
-                            if (results.errors.length > 0) {
-                                console.warn('CSV 파싱 오류:', results.errors);
-                                document.getElementById('status').textContent = `파싱 오류: ${results.errors[0].message}`;
-                                return;
-                            }
-                            processLoadedData({ data: results.data, isXlsx: false });
-                        }
-                    });
-                };
-                reader.readAsText(file, 'UTF-8');
+                reader.onload = (e) => parseAndLoadCsv(e.target.result);
+                reader.readAsText(file);
             }
         }
 
@@ -1241,7 +1221,7 @@
                         document.getElementById('status').textContent = `파싱 오류: ${results.errors[0].message}`;
                         return;
                     }
-                    processLoadedData({ data: results.data, isXlsx: false });
+                    processLoadedData(results.data);
                 },
                 error: (err) => {
                     document.getElementById('status').textContent = 'URL 로드 오류';
@@ -1272,6 +1252,13 @@
             onGroupColumnChange(); // 지도 변경 후 데이터 다시 그리기
         }
 
+        function toggleCanvasRenderer() {
+            const toggle = document.getElementById('canvasRenderToggle');
+            useCanvasRenderer = !useCanvasRenderer;
+            toggle.classList.toggle('active', useCanvasRenderer);
+            onGroupColumnChange(); // Re-render with the new renderer
+        }
+
         document.addEventListener('DOMContentLoaded', function() {
             initMap();
             
@@ -1280,6 +1267,7 @@
             document.getElementById('addGroupLevel').addEventListener('click', () => addGroupSelector());
             document.getElementById('pathToggle').addEventListener('click', togglePaths);
             document.getElementById('mapProviderToggle').addEventListener('click', toggleMapProvider);
+            document.getElementById('canvasRenderToggle').addEventListener('click', toggleCanvasRenderer);
             
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 btn.addEventListener('click', () => switchTab(btn.dataset.tab));

@@ -838,28 +838,8 @@
             const sheetControlsDiv = document.getElementById('sheetControls');
             sheetControlsDiv.innerHTML = '';
             
-            Object.entries(allData).forEach(([sheetName, sheetData], index) => {
+            Object.keys(allData).forEach((sheetName, index) => {
                 const color = colors[index % colors.length];
-                const rowCount = sheetData.length - 1; // Subtract header row
-                
-                let totalDistance = 0;
-                if (rowCount > 1) {
-                    const headers = sheetData[0];
-                    const latIndex = findColumnIndex(headers, ['lat', 'latitude', '위도']);
-                    const lngIndex = findColumnIndex(headers, ['lng', 'longitude', '경도']);
-                    if (latIndex !== -1 && lngIndex !== -1) {
-                        for (let i = 1; i < sheetData.length - 1; i++) {
-                            const lat1 = parseFloat(sheetData[i][latIndex]);
-                            const lon1 = parseFloat(sheetData[i][lngIndex]);
-                            const lat2 = parseFloat(sheetData[i+1][latIndex]);
-                            const lon2 = parseFloat(sheetData[i+1][lngIndex]);
-                            if (!isNaN(lat1) && !isNaN(lon1) && !isNaN(lat2) && !isNaN(lon2)) {
-                                totalDistance += calculateDistance(lat1, lon1, lat2, lon2);
-                            }
-                        }
-                    }
-                }
-
                 const checkboxWrapper = document.createElement('div');
                 checkboxWrapper.className = 'checkbox-item';
                 const checkbox = document.createElement('input');
@@ -879,7 +859,7 @@
                 
                 const label = document.createElement('label');
                 label.htmlFor = checkbox.id;
-                label.textContent = `${sheetName} (${rowCount}건, ${totalDistance.toFixed(2)}km)`;
+                label.textContent = sheetName;
                 label.style.color = color;
                 label.style.fontWeight = '600';
                 
@@ -996,6 +976,7 @@
                      allData['Sheet1'] = data.filter(row => !isEmptyRow(row));
                 }
             }
+>>>>>>> e2e5b38 (Remove canvas renderer and fix XLSX sheet name loading)
 
             Object.values(allData).forEach(sheetData => {
                 if (sheetData.length > 0) {
@@ -1288,3 +1269,30 @@
     </script>
 </body>
 </html>
+</final_file_content>
+
+IMPORTANT: For any future changes to this file, use the final_file_content shown above as your reference. This content reflects the current state of the file, including any auto-formatting (e.g., if you used single quotes but the formatter converted them to double quotes). Always base your SEARCH/REPLACE operations on this final version to ensure accuracy.
+
+<environment_details>
+# VSCode Visible Files
+../../../.history/index_20250730120135.html
+../../../.history/index_20250730120135.html
+../../../.history/index_20250730120658.html
+../../../.history/index_20250730120658.html
+../../../index.html
+../../../index.html
+index.html
+
+# VSCode Open Tabs
+server.js
+index.html
+
+# Current Time
+2025. 7. 30. 오후 2:23:13 (Asia/Seoul, UTC+9:00)
+
+# Context Window Usage
+183,648 / 1,048.576K tokens used (18%)
+
+# Current Mode
+ACT MODE
+</environment_details>
