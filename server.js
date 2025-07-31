@@ -2,7 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = 8080;
+const PORT = 8000;
 
 const server = http.createServer((req, res) => {
     // 요청된 URL이 루트('/')일 경우, location_tracker_map.html 파일을 제공합니다.
@@ -17,7 +17,7 @@ const server = http.createServer((req, res) => {
                 console.error('Error reading file:', err);
                 return;
             }
-            
+
             // 파일을 성공적으로 읽으면 HTML 콘텐츠를 제공합니다.
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
             res.end(content);

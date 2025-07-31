@@ -300,6 +300,56 @@
             max-width: 300px;
         }
 
+        /* 그룹 트리 스타일 */
+        .group-tree details {
+            margin: 5px 0;
+            border-radius: 6px;
+            transition: background 0.2s ease;
+        }
+
+        .group-tree details[style*="--force-collapse: none"] {
+            display: none !important;
+        }
+
+        .group-tree details:hover {
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .group-tree summary {
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .group-tree summary:hover {
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        .group-tree summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .group-tree .group-arrow {
+            transition: transform 0.2s ease;
+            font-size: 12px;
+            color: #666;
+            margin-right: 8px;
+        }
+
+        .group-tree details[open] .group-arrow {
+            transform: rotate(90deg);
+        }
+
+        .group-tree .group-label {
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+
+        .group-tree .group-label:hover {
+            color: #667eea !important;
+        }
+
         .info-popup h4 {
             margin: 0 0 10px 0;
             color: #2c3e50;
@@ -432,6 +482,8 @@
         let activeTab = 'sheets';
         let selectedSheets = new Set();
         let selectedGroups = new Set();
+        let allLocations = []; // 전역 변수로 선언
+        let tsIndex = -1; // 전역 변수로 선언
 
         function excelSerialDateToJSDate(serial) {
             const utc_days = Math.floor(serial - 25569);
@@ -611,6 +663,11 @@
                 fitBounds: (locations) => {
                     const group = new L.featureGroup(locations.map(loc => L.marker([loc.lat, loc.lng])));
                     map.fitBounds(group.getBounds().pad(0.1));
+                },
+                getBounds: (locations) => {
+                    if (locations.length === 0) return null;
+                    const group = new L.featureGroup(locations.map(loc => L.marker([loc.lat, loc.lng])));
+                    return group.getBounds();
                 }
             };
 
@@ -697,6 +754,15 @@
                     );
                     locations.forEach(loc => bounds.extend(new naver.maps.LatLng(loc.lat, loc.lng)));
                     naverMap.fitBounds(bounds);
+                },
+                getBounds: (locations) => {
+                    if (locations.length === 0) return null;
+                    const bounds = new naver.maps.LatLngBounds(
+                        new naver.maps.LatLng(locations[0].lat, locations[0].lng),
+                        new naver.maps.LatLng(locations[0].lat, locations[0].lng)
+                    );
+                    locations.forEach(loc => bounds.extend(new naver.maps.LatLng(loc.lat, loc.lng)));
+                    return bounds;
                 }
             };
             return mapProvider === 'osm' ? leafletApi : naverApi;
@@ -712,7 +778,8 @@
             const allPathLayers = Object.values(pathLayers).flat();
 
             if (showPaths) {
-                mapApi.addLayers(allPathLayers);
+                // 경로를 다시 그리기 위해 현재 상태로 데이터 재처리
+                onGroupColumnChange();
             } else {
                 mapApi.removeLayers(allPathLayers);
             }
@@ -947,6 +1014,30 @@
                     } else {
                         selectedSheets.delete(sheetName);
                     }
+
+                    // 시트 변경 시 해당 시트의 레이어만 제거하고 다시 그리기
+                    const mapApi = getMapApi();
+
+                    // 현재 시트의 마커와 경로 제거
+                    if (mapLayers[sheetName]) {
+                        mapApi.removeLayers(mapLayers[sheetName]);
+                        delete mapLayers[sheetName];
+                    }
+                    if (pathLayers[sheetName]) {
+                        mapApi.removeLayers(pathLayers[sheetName]);
+                        delete pathLayers[sheetName];
+                    }
+
+                    // 그룹 모드인 경우 그룹 레이어도 제거
+                    if (mapLayers['groupedMarkers']) {
+                        mapApi.removeLayers(mapLayers['groupedMarkers']);
+                        delete mapLayers['groupedMarkers'];
+                    }
+                    if (pathLayers['groupedPaths']) {
+                        mapApi.removeLayers(pathLayers['groupedPaths']);
+                        delete pathLayers['groupedPaths'];
+                    }
+
                     onGroupColumnChange(); // Refresh map and groups
                     clearPopup();
                 });
@@ -966,32 +1057,322 @@
             if (currentGroupColumns.length === 0) return;
 
             const mapApi = getMapApi();
-            mapApi.clearAllLayers();
+
+            // 기존 그룹 레이어들 제거
+            if (mapLayers['groupedMarkers']) {
+                mapApi.removeLayers(mapLayers['groupedMarkers']);
+                delete mapLayers['groupedMarkers'];
+            }
+            if (pathLayers['groupedPaths']) {
+                mapApi.removeLayers(pathLayers['groupedPaths']);
+                delete pathLayers['groupedPaths'];
+            }
 
             const visibleSheetData = {};
             selectedSheets.forEach(sheetName => {
                 if (allData[sheetName]) visibleSheetData[sheetName] = allData[sheetName];
             });
 
-            // 빠른 지도 업데이트를 위해 기존 로직 재사용
-            displayDataAsGroups(currentGroupColumns, visibleSheetData);
+            // 빠른 지도 업데이트를 위해 기존 로직 재사용 (그룹 컨트롤은 생성하지 않음)
+            displayDataAsGroups(currentGroupColumns, visibleSheetData, false);
         }
 
         function createGroupControls(hierarchicalData) {
             const groupControlsDiv = document.getElementById('groupControls');
+
+            // 기존 details 요소들의 열림/닫힘 상태를 저장
+            const existingStates = {};
+            if (groupControlsDiv.children.length > 0) {
+                const existingDetails = groupControlsDiv.querySelectorAll('details');
+                existingDetails.forEach(details => {
+                    const summary = details.querySelector('summary');
+                    if (summary) {
+                        const label = summary.querySelector('.group-label');
+                        if (label) {
+                            const key = label.textContent.split(' (')[0]; // 그룹명만 추출
+                            existingStates[key] = details.open;
+                        }
+                    }
+                });
+            }
+
             groupControlsDiv.innerHTML = '';
+            groupControlsDiv.className = 'group-controls group-tree';
 
             if (Object.keys(hierarchicalData).length === 0) {
                 groupControlsDiv.textContent = '표시할 그룹이 없습니다. 시트를 선택하거나 그룹 기준을 설정해주세요.';
                 return;
             }
 
+            // 재귀적으로 건수를 계산하는 함수
+            function calculateCount(data) {
+                console.log('=== calculateCount 호출 ===');
+                console.log('data:', data);
+                console.log('Array.isArray(data):', Array.isArray(data));
+
+                if (Array.isArray(data)) {
+                    const result = data.length;
+                    console.log('배열이므로 결과:', result);
+                    return result;
+                } else {
+                    let total = 0;
+                    Object.values(data).forEach(value => {
+                        total += calculateCount(value);
+                    });
+                    console.log('객체이므로 결과:', total);
+                    return total;
+                }
+            }
+
+            // 자식이 선택되지 않은 부모를 확인하는 함수
+            function hasSelectedChildren(data, level = 0) {
+                console.log('=== hasSelectedChildren 호출 ===');
+                console.log('data:', data);
+                console.log('level:', level);
+                console.log('Array.isArray(data):', Array.isArray(data));
+
+                if (Array.isArray(data)) {
+                    const result = data.length > 0;
+                    console.log('배열이므로 결과:', result);
+                    return result;
+                } else {
+                    const result = Object.values(data).some(value => hasSelectedChildren(value, level + 1));
+                    console.log('객체이므로 결과:', result);
+                    return result;
+                }
+            }
+
+            // 부모 그룹 자동 접기/체크 함수 (특정 부모 그룹만 처리)
+            function updateParentGroupState(parentDetails) {
+                console.log('=== updateParentGroupState 시작 ===');
+                console.log('parentDetails:', parentDetails);
+
+                if (!parentDetails) {
+                    console.log('parentDetails가 null이므로 종료');
+                    return;
+                }
+
+                // 부모 체크박스는 제외하고 직접적인 자식 체크박스만 선택
+                const parentCheckbox = parentDetails.querySelector('summary input[type="checkbox"]');
+                const allChildCheckboxes = parentDetails.querySelectorAll('details > summary input[type="checkbox"]');
+                // 부모 체크박스를 제외한 직접적인 자식 체크박스만 필터링
+                const childCheckboxes = Array.from(allChildCheckboxes).filter(checkbox =>
+                    checkbox !== parentCheckbox &&
+                    checkbox.closest('details').parentElement === parentDetails
+                );
+
+                console.log('childCheckboxes 개수:', childCheckboxes.length);
+                console.log('parentCheckbox:', parentCheckbox);
+
+                if (!parentCheckbox || childCheckboxes.length === 0) {
+                    console.log('parentCheckbox가 없거나 childCheckboxes가 없으므로 종료');
+                    return;
+                }
+
+                const checkedChildren = Array.from(childCheckboxes).filter(checkbox => checkbox.checked);
+                const totalChildren = childCheckboxes.length;
+
+                console.log('checkedChildren 개수:', checkedChildren.length);
+                console.log('totalChildren:', totalChildren);
+                console.log('parentCheckbox 현재 상태:', parentCheckbox.checked);
+                console.log('parentCheckbox dataset.key:', parentCheckbox.dataset.key);
+
+                // 모든 자식이 선택되었는지 확인
+                const allChildrenSelected = checkedChildren.length === totalChildren;
+                // 선택된 자식이 있는지 확인
+                const hasSelectedChildren = checkedChildren.length > 0;
+
+                console.log('allChildrenSelected:', allChildrenSelected);
+                console.log('hasSelectedChildren:', hasSelectedChildren);
+
+                if (allChildrenSelected) {
+                    console.log('모든 자식이 선택됨 - 부모도 선택');
+                    // 모든 자식이 선택되면 부모도 선택
+                    if (!parentCheckbox.checked) {
+                        console.log('부모 체크박스를 체크로 변경');
+                        parentCheckbox.checked = true;
+                        selectedGroups.add(parentCheckbox.dataset.key);
+                        console.log('selectedGroups에 추가됨:', parentCheckbox.dataset.key);
+                    } else {
+                        console.log('부모가 이미 체크되어 있음');
+                    }
+                } else if (!hasSelectedChildren) {
+                    console.log('선택된 자식이 없음 - 부모 체크 해제 및 접기');
+                    // 선택된 자식이 없으면 부모 체크 해제 및 접기
+                    if (parentCheckbox.checked) {
+                        console.log('부모 체크박스를 체크 해제로 변경');
+                        parentCheckbox.checked = false;
+                        selectedGroups.delete(parentCheckbox.dataset.key);
+                        console.log('selectedGroups에서 제거됨:', parentCheckbox.dataset.key);
+                    } else {
+                        console.log('부모가 이미 체크 해제되어 있음');
+                    }
+                    console.log('부모 그룹을 접음 (open = false)');
+                    forceCollapseDetails(parentDetails);
+                } else {
+                    console.log('일부 자식만 선택됨 - 상태 변경 없음');
+                }
+
+                console.log('=== updateParentGroupState 종료 ===');
+            }
+
+            // 강제로 details 요소를 접는 함수
+            function forceCollapseDetails(detailsElement) {
+                if (!detailsElement) return;
+
+                console.log('forceCollapseDetails 호출됨, 현재 details.open:', detailsElement.open);
+
+                // 즉시 접기 시도
+                detailsElement.open = false;
+                console.log('즉시 접기 후 details.open:', detailsElement.open);
+
+                // CSS를 통한 강제 접기
+                detailsElement.style.setProperty('--force-collapse', 'none');
+                detailsElement.style.setProperty('display', 'block');
+
+                // 지연을 두어 다른 작업이 완료된 후 다시 접기 시도
+                setTimeout(() => {
+                    detailsElement.open = false;
+                    console.log('지연 접기 후 details.open:', detailsElement.open);
+                }, 50);
+
+                // 추가 지연으로 한 번 더 시도
+                setTimeout(() => {
+                    detailsElement.open = false;
+                    console.log('최종 접기 후 details.open:', detailsElement.open);
+                }, 150);
+
+                // 더 긴 지연으로 한 번 더 시도
+                setTimeout(() => {
+                    detailsElement.open = false;
+                    console.log('최종 최종 접기 후 details.open:', detailsElement.open);
+                }, 500);
+            }
+
+            // 전체 부모 그룹 상태 업데이트 함수
+            function updateAllParentGroups() {
+                const allDetails = groupControlsDiv.querySelectorAll('details');
+                allDetails.forEach(details => {
+                    updateParentGroupState(details);
+                });
+            }
+
+            // 그룹 깜빡이기 함수
+            function blinkGroup(groupKey) {
+                const mapApi = getMapApi();
+
+                // 현재 표시된 마커들에서 해당 그룹의 위치 찾기
+                const groupLocations = [];
+
+                // mapLayers['groupedMarkers']에서 해당 그룹의 마커들 찾기
+                if (mapLayers['groupedMarkers']) {
+                    mapLayers['groupedMarkers'].forEach((marker) => {
+                        // 마커에 저장된 위치 데이터 사용
+                        if (marker.locationData && marker.locationData.group === groupKey) {
+                            groupLocations.push(marker.locationData);
+                        }
+                    });
+                }
+
+                if (groupLocations.length === 0) return;
+
+                // 깜빡이기 효과를 위한 임시 스타일
+                const blinkStyle = {
+                    opacity: 0.3,
+                    weight: 5,
+                    color: '#ff0000'
+                };
+
+                // 마커와 경로에 깜빡이기 효과 적용
+                const blinkElements = [];
+
+                // 마커 깜빡이기
+                groupLocations.forEach(loc => {
+                    if (!isNaN(loc.lat) && !isNaN(loc.lng)) {
+                        const marker = mapApi.createMarker(loc, '#ff0000', groupKey);
+                        // Leaflet의 경우 setStyle 메서드 사용
+                        if (mapProvider === 'osm' && marker.setStyle) {
+                            marker.setStyle(blinkStyle);
+                        }
+                        blinkElements.push(marker);
+                    }
+                });
+
+                // 경로 깜빡이기
+                if (groupLocations.length > 1) {
+                    // 시간순으로 정렬
+                    const sortedLocs = [...groupLocations].sort((a, b) => {
+                        if (a.timestamp && b.timestamp) {
+                            return new Date(a.timestamp) - new Date(b.timestamp);
+                        }
+                        const dateA = new Date(a.date);
+                        const dateB = new Date(b.date);
+                        if (dateA > dateB) return 1;
+                        if (dateA < dateB) return -1;
+                        return String(a.time).localeCompare(String(b.time));
+                    });
+
+                    for (let i = 0; i < sortedLocs.length - 1; i++) {
+                        const start = sortedLocs[i];
+                        const end = sortedLocs[i + 1];
+                        if (!isNaN(start.lat) && !isNaN(start.lng) && !isNaN(end.lat) && !isNaN(end.lng)) {
+                            const path = mapApi.createPath([start, end], '#ff0000');
+                            // Leaflet의 경우 setStyle 메서드 사용
+                            if (mapProvider === 'osm') {
+                                path.forEach(p => {
+                                    if (p.setStyle) p.setStyle(blinkStyle);
+                                });
+                            }
+                            blinkElements.push(...path);
+                        }
+                    }
+                }
+
+                // 깜빡이기 요소들을 지도에 추가
+                mapApi.addLayers(blinkElements);
+
+                // 1초 후 깜빡이기 효과 제거
+                setTimeout(() => {
+                    mapApi.removeLayers(blinkElements);
+                }, 1000);
+
+                // 그룹이 화면 밖에 있으면 포커스 이동
+                if (groupLocations.length > 0) {
+                    mapApi.fitBounds(groupLocations);
+                }
+            }
+
             const buildGroupTree = (data, parentElement, level = 0, parentKey = '') => {
+                console.log('=== buildGroupTree 호출 ===');
+                console.log('data:', data);
+                console.log('parentElement:', parentElement);
+                console.log('level:', level);
+                console.log('parentKey:', parentKey);
+
                 Object.entries(data).forEach(([key, value]) => {
                     const currentFullKey = parentKey ? `${parentKey}|${key}` : key;
+                    const count = calculateCount(value);
+                    const hasChildren = !Array.isArray(value);
+                    const shouldCollapse = hasChildren && !hasSelectedChildren(value);
+
+                    console.log('key:', key);
+                    console.log('currentFullKey:', currentFullKey);
+                    console.log('count:', count);
+                    console.log('hasChildren:', hasChildren);
+                    console.log('shouldCollapse:', shouldCollapse);
 
                     const details = document.createElement('details');
-                    details.open = true;
+                    details.className = 'group-tree';
+
+                    // 기존 상태가 있으면 적용, 없으면 자동 접기 로직 사용
+                    if (existingStates.hasOwnProperty(key)) {
+                        details.open = existingStates[key];
+                        console.log(`기존 상태 적용: ${key} = ${existingStates[key]}`);
+                    } else {
+                        details.open = !shouldCollapse; // 자식이 선택되지 않은 부모는 접기
+                        console.log(`자동 접기 로직 적용: ${key} = ${!shouldCollapse}`);
+                    }
+
                     details.style.marginLeft = `${level * 15}px`;
 
                     const summary = document.createElement('summary');
@@ -1000,14 +1381,24 @@
                     summary.style.gap = '8px';
                     summary.style.cursor = 'pointer';
 
+                    // 화살표 아이콘 추가
+                    const arrow = document.createElement('span');
+                    arrow.className = 'group-arrow';
+                    arrow.innerHTML = '▶';
+
+                    // details 상태에 따라 화살표 회전
+                    details.addEventListener('toggle', () => {
+                        arrow.style.transform = details.open ? 'rotate(90deg)' : 'rotate(0deg)';
+                    });
+
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
-                    checkbox.id = `group-checkbox-${currentFullKey.replace(/[^a-zA-Z0-9]/g, '-')}`; // Create a unique ID
+                    checkbox.id = `group-checkbox-${currentFullKey.replace(/[^a-zA-Z0-9]/g, '-')}`;
                     checkbox.checked = selectedGroups.has(currentFullKey);
                     checkbox.dataset.key = currentFullKey;
 
                     checkbox.addEventListener('change', (e) => {
-                        e.stopPropagation(); // 이벤트 버블링 방지
+                        e.stopPropagation();
                         const isChecked = e.target.checked;
                         const key = e.target.dataset.key;
 
@@ -1018,8 +1409,13 @@
                             selectedGroups.delete(key);
                         }
 
-                        // 하위 체크박스들도 동일하게 설정
-                        const childCheckboxes = details.querySelectorAll('input[type="checkbox"]:not([data-key="' + key + '"])');
+                        // 하위 체크박스들도 동일하게 설정 (직접적인 자식만)
+                        const allChildCheckboxes = details.querySelectorAll('details > summary input[type="checkbox"]');
+                        // 현재 체크박스를 제외한 직접적인 자식 체크박스만 필터링
+                        const childCheckboxes = Array.from(allChildCheckboxes).filter(checkbox =>
+                            checkbox !== e.target &&
+                            checkbox.closest('details').parentElement === details
+                        );
                         childCheckboxes.forEach(child => {
                             child.checked = isChecked;
                             if (isChecked) {
@@ -1029,17 +1425,48 @@
                             }
                         });
 
-                        // 지도 업데이트
-                        updateMapDisplay();
+                        // 부모 그룹 상태 업데이트 (직접 부모만)
+                        console.log('=== 체크박스 변경 이벤트 ===');
+                        console.log('변경된 체크박스:', checkbox);
+                        console.log('체크박스 상태:', checkbox.checked);
+                        console.log('체크박스 dataset.key:', checkbox.dataset.key);
+
+                        const parentDetails = details.parentElement.closest('details');
+                        console.log('찾은 부모 details:', parentDetails);
+
+                        if (parentDetails) {
+                            console.log('부모 details가 존재하므로 updateParentGroupState 호출');
+                            updateParentGroupState(parentDetails);
+                        } else {
+                            console.log('부모 details가 없음');
+                        }
+
+                        // 지도 업데이트 - 전체를 다시 그리지 않고 선택된 그룹만 처리
+                        console.log('현재 selectedGroups 상태:', Array.from(selectedGroups));
+                        console.log('체크박스 변경 후 details.open 상태:', details.open);
+                        if (currentGroupColumns.length > 0) {
+                            // 지연을 두어 collapse 작업이 완료된 후 지도 업데이트
+                            setTimeout(() => {
+                                console.log('updateMapDisplay 호출 전 details.open 상태:', details.open);
+                                updateMapDisplay();
+                                console.log('updateMapDisplay 호출 후 details.open 상태:', details.open);
+                            }, 300); // 더 긴 지연 시간
+                        }
                     });
 
                     const label = document.createElement('span');
-                    const count = Array.isArray(value) ? value.length : 0;
+                    label.className = 'group-label';
                     label.textContent = `${key} (${count}건)`;
                     label.style.fontWeight = '600';
                     label.style.color = getColorForValue(key);
 
-                    summary.append(checkbox, label);
+                    // 그룹명 클릭 이벤트
+                    label.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        blinkGroup(currentFullKey);
+                    });
+
+                    summary.append(arrow, checkbox, label);
                     details.appendChild(summary);
 
                     if (Array.isArray(value)) { // Leaf node
@@ -1130,6 +1557,179 @@
             const contentId = (tabId === 'sheets') ? 'sheetControls' : 'groupControls';
             const contentElement = document.getElementById(contentId);
             if (contentElement) contentElement.classList.add('active');
+        }
+
+        // 기존 레이어를 새로운 그룹 기준에 맞게 업데이트하는 함수
+        function updateExistingLayersForNewGroups(groupColumns, sourceData) {
+            console.log('기존 레이어를 새로운 그룹 기준으로 업데이트 중...');
+
+            // 새로운 그룹 정보 생성
+            const newGroupInfo = {};
+            Object.entries(sourceData).forEach(([sheetName, sheetData]) => {
+                const headers = sheetData[0];
+                const groupIndices = groupColumns.map(col => headers.findIndex(h => h && h.toString() === col));
+
+                if (groupIndices.some(i => i === -1)) return;
+
+                sheetData.slice(1).forEach((row, index) => {
+                    const groupKey = groupColumns.map((col, i) => {
+                        let value = row[groupIndices[i]] || 'Unknown';
+
+                        // Date 컬럼인 경우 정수형을 날짜로 변환
+                        if (col && col.toLowerCase().includes('date')) {
+                            if (!isNaN(value) && Number(value) > 40000) {
+                                const convertedDate = convertToKST(excelSerialDateToJSDate(Number(value)));
+                                value = convertedDate.date;
+                            }
+                        }
+                        return value;
+                    }).join('|');
+
+                    const latIndex = findColumnIndex(headers, ['lat', 'latitude', '위도']);
+                    const lngIndex = findColumnIndex(headers, ['lng', 'longitude', '경도']);
+
+                    if (latIndex !== -1 && lngIndex !== -1) {
+                        const lat = parseFloat(row[latIndex]);
+                        const lng = parseFloat(row[lngIndex]);
+
+                        if (!isNaN(lat) && !isNaN(lng)) {
+                            if (!newGroupInfo[groupKey]) {
+                                newGroupInfo[groupKey] = [];
+                            }
+                            newGroupInfo[groupKey].push({
+                                lat: lat,
+                                lng: lng,
+                                sheetName: sheetName,
+                                rowIndex: index + 2
+                            });
+                        }
+                    }
+                });
+            });
+
+            // 기존 마커들의 색상 업데이트
+            Object.entries(mapLayers).forEach(([layerKey, layer]) => {
+                if (layerKey.startsWith('marker_')) {
+                    const markerData = layer.markerData;
+                    if (markerData) {
+                        const newGroupKey = findNewGroupKeyForLocation(markerData, newGroupInfo);
+                        if (newGroupKey) {
+                            const color = getGroupColor(newGroupKey);
+                            updateMarkerColor(layer, color);
+                        }
+                    }
+                }
+            });
+
+            // 기존 경로들의 색상 업데이트
+            Object.entries(pathLayers).forEach(([layerKey, pathArray]) => {
+                if (layerKey.startsWith('path_')) {
+                    const pathData = pathArray[0]?.pathData;
+                    if (pathData) {
+                        const newGroupKey = findNewGroupKeyForPath(pathData, newGroupInfo);
+                        if (newGroupKey) {
+                            const color = getGroupColor(newGroupKey);
+                            updatePathColor(pathArray, color);
+                        }
+                    }
+                }
+            });
+
+            // 그룹 컨트롤 업데이트 (기존 상태 유지)
+            const hierarchicalData = buildHierarchicalData(newGroupInfo);
+            createGroupControls(hierarchicalData);
+        }
+
+        // 위치에 대한 새로운 그룹 키 찾기
+        function findNewGroupKeyForLocation(location, newGroupInfo) {
+            const tolerance = 0.0001; // 약 10미터
+            for (const [groupKey, locations] of Object.entries(newGroupInfo)) {
+                for (const loc of locations) {
+                    if (Math.abs(loc.lat - location.lat) < tolerance &&
+                        Math.abs(loc.lng - location.lng) < tolerance &&
+                        loc.sheetName === location.sheetName) {
+                        return groupKey;
+                    }
+                }
+            }
+            return null;
+        }
+
+        // 경로에 대한 새로운 그룹 키 찾기
+        function findNewGroupKeyForPath(pathData, newGroupInfo) {
+            const startGroup = findNewGroupKeyForLocation(pathData.start, newGroupInfo);
+            const endGroup = findNewGroupKeyForLocation(pathData.end, newGroupInfo);
+
+            // 시작점과 끝점이 같은 그룹에 있으면 해당 그룹 반환
+            if (startGroup && startGroup === endGroup) {
+                return startGroup;
+            }
+            return null;
+        }
+
+        // 마커 색상 업데이트
+        function updateMarkerColor(layer, color) {
+            const mapApi = getMapApi();
+            if (mapProvider === 'osm' && layer.marker && layer.marker.setStyle) {
+                layer.marker.setStyle({ color: color });
+            } else if (mapProvider === 'naver' && layer.marker) {
+                // Naver Maps의 경우 마커 색상 변경
+                layer.marker.setIcon({
+                    content: `<div style="background-color: ${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white;"></div>`
+                });
+            }
+        }
+
+        // 경로 색상 업데이트
+        function updatePathColor(pathArray, color) {
+            const mapApi = getMapApi();
+            if (mapProvider === 'osm') {
+                pathArray.forEach(path => {
+                    if (path.setStyle) {
+                        path.setStyle({ color: color });
+                    }
+                });
+            } else if (mapProvider === 'naver') {
+                // Naver Maps의 경우 경로 색상 변경
+                pathArray.forEach(path => {
+                    if (path.setOptions) {
+                        path.setOptions({ strokeColor: color });
+                    }
+                });
+            }
+        }
+
+        // 그룹 색상 가져오기
+        function getGroupColor(groupKey) {
+            const groupKeys = Array.from(new Set(allLocations.map(loc => loc.group)));
+            const colorIndex = groupKeys.indexOf(groupKey);
+            return colors[colorIndex % colors.length];
+        }
+
+        // 계층적 데이터 구축
+        function buildHierarchicalData(groupInfo) {
+            const hierarchicalData = {};
+
+            Object.entries(groupInfo).forEach(([groupKey, locations]) => {
+                const parts = groupKey.split('|');
+                let current = hierarchicalData;
+
+                parts.forEach((part, index) => {
+                    if (!current[part]) {
+                        current[part] = {
+                            count: 0,
+                            children: {}
+                        };
+                    }
+                    current[part].count += locations.length;
+
+                    if (index < parts.length - 1) {
+                        current = current[part].children;
+                    }
+                });
+            });
+
+            return hierarchicalData;
         }
 
         function displayDataAsGroups(groupColumns, sourceData) {
@@ -1244,7 +1844,10 @@
             visibleLocations.forEach(loc => {
                 if (isNaN(loc.lat) || isNaN(loc.lng)) return;
                 const color = getColorForValue(loc.group.split('|')[0]); // Color by top-level group
-                markerLayers.push(mapApi.createMarker(loc, color, loc.group));
+                const marker = mapApi.createMarker(loc, color, loc.group);
+                // 마커에 위치 데이터 저장 (blinkGroup 함수에서 사용)
+                marker.locationData = loc;
+                markerLayers.push(marker);
             });
             mapApi.addLayers(markerLayers);
             mapLayers['groupedMarkers'] = markerLayers;
