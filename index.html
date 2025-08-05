@@ -15,6 +15,32 @@
     <script id="naverMapApi" type="text/javascript"
         src="https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=03aat0yes9"></script>
     <link rel="stylesheet" href="styles.css">
+    <style>
+        .controls {
+            display: flex;
+            gap: 20px;
+            justify-content: space-between;
+        }
+        .input-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .input-wrapper {
+            display: flex;
+            gap: 10px;
+        }
+        .input-wrapper input {
+            flex-grow: 1;
+        }
+        .input-section input[type="file"] {
+            width: 100%;
+            padding: 5px;
+            box-sizing: border-box;
+            height: 36px; /* Match button height */
+        }
+    </style>
 </head>
 
 <body>
@@ -22,15 +48,30 @@
         <div class="header">
             <h1>🗺️ 위치 추적 지도</h1>
             <div class="controls">
-                <div class="file-input-group">
-                    <label for="csvFile">📁 CSV/XLSX 파일 업로드</label>
-                    <input type="file" id="csvFile" accept=".csv,.xlsx,.xls">
+                <div class="input-section">
+                    <div class="file-input-group">
+                        <label for="csvFile">📁 CSV/XLSX 파일 업로드</label>
+                        <input type="file" id="csvFile" accept=".csv,.xlsx,.xls">
+                    </div>
+                    <div class="url-input-group">
+                        <label for="sheetUrl">🔗 구글 스프레드시트 URL</label>
+                        <div class="input-wrapper">
+                            <input type="url" id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/...">
+                            <button class="load-btn" id="loadFromUrl">로드</button>
+                        </div>
+                    </div>
                 </div>
-                <div class="url-input-group">
-                    <label for="sheetUrl">🔗 구글 스프레드시트 URL</label>
-                    <div style="display: flex; gap: 10px;">
-                        <input type="url" id="sheetUrl" placeholder="https://docs.google.com/spreadsheets/d/...">
-                        <button class="load-btn" id="loadFromUrl">로드</button>
+                <div class="input-section">
+                    <div class="file-input-group">
+                        <label for="geofenceFile">🌐 Geofence CSV 업로드</label>
+                        <input type="file" id="geofenceFile" accept=".csv">
+                    </div>
+                    <div class="url-input-group">
+                        <label for="geofenceUrl">🔗 Geofence CSV URL</label>
+                        <div class="input-wrapper">
+                            <input type="url" id="geofenceUrl" placeholder="Geofence CSV 파일 URL">
+                            <button class="load-btn" id="loadGeofenceFromUrl">로드</button>
+                        </div>
                     </div>
                 </div>
             </div>

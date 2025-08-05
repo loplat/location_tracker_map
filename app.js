@@ -5,6 +5,7 @@ let mapProvider = 'osm'; // 'osm' or 'naver'
 let allData = {};
 let mapLayers = {};
 let pathLayers = {};
+let geofenceLayers = {};
 let colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3', '#54A0FF', '#5F27CD', '#FF7675', '#74B9FF', '#A29BFE', '#6C5CE7', '#00B894', '#00CEC9', '#E84393', '#FD79A8'];
 let currentPopup = null;
 let showPaths = true;
@@ -210,12 +211,71 @@ function switchTab(tabId) {
     }
 }
 
+function handleGeofenceFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    document.getElementById('status').textContent = '지오펜스 파일 처리 중...';
+    const reader = new FileReader();
+
+    reader.onload = async (e) => {
+        try {
+            const parsedData = await DataParser.parseCsvData(e.target.result);
+            processGeofenceData(parsedData.data);
+        } catch (error) {
+            document.getElementById('status').textContent = error.message;
+        }
+    };
+    reader.readAsText(file, 'UTF-8');
+}
+
+function handleGeofenceUrlLoad() {
+    const url = document.getElementById('geofenceUrl').value;
+    if (!url) return alert('지오펜스 CSV URL을 입력해주세요.');
+
+    document.getElementById('status').textContent = 'URL에서 지오펜스 데이터 로드 중...';
+
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+
+    fetch(proxyUrl)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.text();
+        })
+        .then(csvText => DataParser.parseCsvData(csvText))
+        .then(parsedData => {
+            processGeofenceData(parsedData.data);
+        })
+        .catch(error => {
+            console.error('지오펜스 URL 로드 오류:', error);
+            document.getElementById('status').textContent = '지오펜스 URL 로드 오류';
+            alert('데이터를 불러올 수 없습니다. URL을 확인해주세요.');
+        });
+}
+
+function processGeofenceData(data) {
+    try {
+        const geofences = parseGeofenceData(data);
+        const mapApi = getMapApi();
+        mapApi.clearGeofenceLayers();
+        geofenceLayers = mapApi.drawGeofences(geofences);
+        document.getElementById('status').textContent = `${geofences.length}개의 지오펜스를 로드했습니다.`;
+    } catch (error) {
+        document.getElementById('status').textContent = `지오펜스 처리 오류: ${error.message}`;
+        alert(`지오펜스 처리 오류: ${error.message}`);
+    }
+}
+
 // 이벤트 리스너 등록
 document.addEventListener('DOMContentLoaded', function () {
     initMap();
 
     document.getElementById('csvFile').addEventListener('change', handleFileSelect);
     document.getElementById('loadFromUrl').addEventListener('click', handleUrlLoad);
+    document.getElementById('geofenceFile').addEventListener('change', handleGeofenceFileSelect);
+    document.getElementById('geofenceUrl').addEventListener('click', handleGeofenceUrlLoad);
     document.getElementById('addGroupLevel').addEventListener('click', () => addGroupSelector());
     document.getElementById('pathToggle').addEventListener('click', togglePaths);
     document.getElementById('mapProviderToggle').addEventListener('click', toggleMapProvider);

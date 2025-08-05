@@ -67,6 +67,32 @@ const MapApiFactory = {
             Object.values(mapLayers).flat().forEach(layer => map.removeLayer(layer));
             Object.values(pathLayers).flat().forEach(layer => map.removeLayer(layer));
         },
+        drawGeofences: (geofences) => {
+            const layers = geofences.map(geofence => {
+                if (geofence.type === 'polygon') {
+                    return L.polygon(geofence.coords, {
+                        color: '#FF4136',
+                        fillColor: '#FF4136',
+                        fillOpacity: 0.2
+                    });
+                } else { // 'circle'
+                    return L.circle([geofence.lat, geofence.lng], {
+                        radius: geofence.radius,
+                        color: '#FF4136',
+                        fillColor: '#FF4136',
+                        fillOpacity: 0.2
+                    });
+                }
+            });
+            layers.forEach(layer => layer.addTo(map));
+            return layers;
+        },
+        clearGeofenceLayers: () => {
+            if (geofenceLayers && geofenceLayers.length > 0) {
+                geofenceLayers.forEach(layer => map.removeLayer(layer));
+            }
+            geofenceLayers = [];
+        },
         fitBounds: (locations) => {
             const group = new L.featureGroup(locations.map(loc => L.marker([loc.lat, loc.lng])));
             map.fitBounds(group.getBounds().pad(0.1));
@@ -143,6 +169,36 @@ const MapApiFactory = {
             Object.values(mapLayers).forEach(layerArray => layerArray.forEach(layer => layer.setMap(null)));
             Object.values(pathLayers).forEach(layerArray => layerArray.forEach(layer => layer.setMap(null)));
         },
+        drawGeofences: (geofences) => {
+            const layers = geofences.map(geofence => {
+                if (geofence.type === 'polygon') {
+                    const paths = geofence.coords.map(coord => new naver.maps.LatLng(coord[0], coord[1]));
+                    return new naver.maps.Polygon({
+                        map: naverMap,
+                        paths: [paths],
+                        strokeColor: '#FF4136',
+                        fillColor: '#FF4136',
+                        fillOpacity: 0.2
+                    });
+                } else { // 'circle'
+                    return new naver.maps.Circle({
+                        map: naverMap,
+                        center: new naver.maps.LatLng(geofence.lat, geofence.lng),
+                        radius: geofence.radius,
+                        strokeColor: '#FF4136',
+                        fillColor: '#FF4136',
+                        fillOpacity: 0.2
+                    });
+                }
+            });
+            return layers;
+        },
+        clearGeofenceLayers: () => {
+            if (geofenceLayers && geofenceLayers.length > 0) {
+                geofenceLayers.forEach(layer => layer.setMap(null));
+            }
+            geofenceLayers = [];
+        },
         fitBounds: (locations) => {
             const bounds = new naver.maps.LatLngBounds(
                 new naver.maps.LatLng(locations[0].lat, locations[0].lng),
@@ -199,4 +255,4 @@ function getMapApi() {
     } else {
         return MapApiFactory.createNaverApi(naverMap);
     }
-} 
+}

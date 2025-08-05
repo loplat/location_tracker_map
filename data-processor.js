@@ -177,12 +177,23 @@ function handleUrlLoad() {
 }
 
 // 공통 데이터 처리 함수들
-function validateRequiredColumns(headers, sheetName) {
+function validateRequiredColumns(headers, sheetName, isGeofence = false) {
+    const latIndex = findColumnIndex(headers, ['lat', 'latitude', '위도']);
+    const lngIndex = findColumnIndex(headers, ['lng', 'longitude', '경도']);
+
+    if (isGeofence) {
+        const radiusIndex = findColumnIndex(headers, ['radius', '반경']);
+        if (latIndex === -1 || lngIndex === -1 || radiusIndex === -1) {
+            const errorMsg = `지오펜스 파일의 필수 컬럼(위도, 경도, 반경)을 찾을 수 없습니다.`;
+            console.error(`Could not find required columns for geofence in: ${sheetName}`);
+            return { valid: false, error: errorMsg };
+        }
+        return { valid: true, latIndex, lngIndex, radiusIndex };
+    }
+
     const tsIndex = findColumnIndex(headers, ['tslocal', 'timestamp', 'datetime']);
     const dateIndex = findColumnIndex(headers, ['date', 'day', '날짜']);
     const timeIndex = findColumnIndex(headers, ['time', '시간']);
-    const latIndex = findColumnIndex(headers, ['lat', 'latitude', '위도']);
-    const lngIndex = findColumnIndex(headers, ['lng', 'longitude', '경도']);
 
     const hasTimestamp = tsIndex !== -1 || (dateIndex !== -1 && timeIndex !== -1);
 
@@ -309,4 +320,68 @@ function drawMapLayers(locations, groupName, color, isGroupMode = false) {
     }
 
     return { layerGroup, pathLayerGroup };
-} 
+}
+
+function parseGeofenceData(data) {
+    if (!data || data.length < 2) {
+        throw new Error('지오펜스 데이터가 비어있거나 헤더가 없습니다.');
+    }
+
+    const headers = data[0];
+    const lowerHeaders = headers.map(h => h.toString().toLowerCase().replace(/[\s_]/g, ''));
+
+    // Find indices for all possible columns
+    const shapeTypeIndex = findColumnIndex(lowerHeaders, ['shapetype']);
+    const polygonIndex = findColumnIndex(lowerHeaders, ['polygon']);
+    const latIndex = findColumnIndex(lowerHeaders, ['lat', 'latitude', '위도']);
+    const lngIndex = findColumnIndex(lowerHeaders, ['lng', 'longitude', '경도']);
+    const radiusIndex = findColumnIndex(lowerHeaders, ['radius', '반경']);
+
+    return data.slice(1).map(row => {
+        let shapeType = 'circle'; // Default to circle
+        if (shapeTypeIndex !== -1 && row[shapeTypeIndex]) {
+            shapeType = row[shapeTypeIndex].toLowerCase();
+        } else if (polygonIndex !== -1 && row[polygonIndex]) {
+            shapeType = 'polygon';
+        }
+
+        if (shapeType === 'polygon') {
+            if (polygonIndex === -1) return null;
+            const wkt = row[polygonIndex];
+            if (!wkt || typeof wkt !== 'string') return null;
+
+            console.log(wkt)
+
+            const coordStringMatch = wkt.match(/\(\(\((.*)\)\)\)/);
+            if (!coordStringMatch || !coordStringMatch[1]) return null;
+
+            console.log(coordStringMatch)
+
+            const coords = coordStringMatch[1].split(',').map(pair => {
+                const [lng, lat] = pair.trim().split(' ').map(Number);
+                if (isNaN(lat) || isNaN(lng)) {
+                    console.log('isNaN', {lat, lng})
+                    return null;
+                }
+                return [lat, lng]; // Leaflet uses [lat, lng]
+            }).filter(Boolean);
+
+            console.log({coords: coords, rawData: row})
+
+            if (coords.length < 3) return null;
+            return { type: 'polygon', coords: coords, rawData: row, headers: headers };
+
+        } else if (shapeType === 'circle') {
+            if (latIndex === -1 || lngIndex === -1 || radiusIndex === -1) return null;
+
+            const lat = parseFloat(row[latIndex]);
+            const lng = parseFloat(row[lngIndex]);
+            const radius = parseFloat(row[radiusIndex]);
+
+            if (isNaN(lat) || isNaN(lng) || isNaN(radius)) return null;
+            return { type: 'circle', lat, lng, radius, rawData: row, headers: headers };
+        }
+
+        return null; // Unknown shape type
+    }).filter(Boolean);
+}
