@@ -94,8 +94,8 @@ function createSheetControls() {
         let totalDistance = 0;
         if (rowCount > 1) {
             const headers = sheetData[0];
-            const latIndex = findColumnIndex(headers, ['lat', 'latitude', '위도']);
-            const lngIndex = findColumnIndex(headers, ['lng', 'longitude', '경도']);
+            const latIndex = findColumnIndex(headers, ['wps_lat', 'lat', 'latitude', '위도']);
+            const lngIndex = findColumnIndex(headers, ['wps_lng', 'lng', 'longitude', '경도']);
             if (latIndex !== -1 && lngIndex !== -1) {
                 for (let i = 1; i < sheetData.length - 1; i++) {
                     const lat1 = parseFloat(sheetData[i][latIndex]);
@@ -237,12 +237,12 @@ function processLoadedData(parsedData) {
 
     function isHeaderRow(row) {
         if (!row || row.length === 0) return false;
-        const lowerRow = row.map(cell => cell ? cell.toString().toLowerCase().replace(/[\s_]/g, '') : '');
-        const hasCombinedTimestamp = lowerRow.some(cell => ['tslocal', 'timestamp', 'datetime'].some(kw => cell.includes(kw)));
+        const lowerRow = row.map(cell => cell ? cell.toString().toLowerCase().replace(/[\s]/g, '') : '');
+        const hasCombinedTimestamp = lowerRow.some(cell => ['time', 'tslocal', 'timestamp', 'datetime'].some(kw => cell.includes(kw)));
         const hasDate = lowerRow.some(cell => ['date', 'day', '날짜'].some(kw => cell.includes(kw)));
         const hasTime = lowerRow.some(cell => ['time', '시간'].some(kw => cell.includes(kw)));
-        const hasLat = lowerRow.some(cell => ['lat', 'latitude', '위도'].some(kw => cell.includes(kw)));
-        const hasLng = lowerRow.some(cell => ['lng', 'longitude', '경도'].some(kw => cell.includes(kw)));
+        const hasLat = lowerRow.some(cell => ['wps_lat', 'lat', 'latitude', '위도'].some(kw => cell.includes(kw)));
+        const hasLng = lowerRow.some(cell => ['wps_lng', 'lng', 'longitude', '경도'].some(kw => cell.includes(kw)));
         return (hasCombinedTimestamp || (hasDate && hasTime)) && hasLat && hasLng;
     }
 
@@ -343,7 +343,99 @@ function processAndDisplayData(groupName, data, color, isSheetGroup = true) {
     }
 
     // 3. Fit bounds if single sheet
-    if (Object.keys(allData).filter(k => selectedSheets.has(k)).length === 1) {
-        mapApi.fitBounds(locations);
+    // if (Object.keys(allData).filter(k => selectedSheets.has(k)).length === 1) {
+    //     mapApi.fitBounds(locations);
+    // }
+}
+
+// 위경도 파싱 함수 - 다양한 형식 지원
+function parseCoordinates(input) {
+    if (!input || typeof input !== 'string') {
+        return null;
     }
-} 
+    
+    // 입력값 정리 (앞뒤 공백 제거)
+    const cleaned = input.trim();
+    
+    // 다양한 구분자로 분리 시도 (탭, 콤마, 공백)
+    let parts = [];
+    
+    // 탭으로 분리
+    if (cleaned.includes('\t')) {
+        parts = cleaned.split('\t');
+    }
+    // 콤마로 분리
+    else if (cleaned.includes(',')) {
+        parts = cleaned.split(',');
+    }
+    // 공백으로 분리 (연속된 공백도 처리)
+    else {
+        parts = cleaned.split(/\s+/);
+    }
+    
+    // 2개의 숫자가 있는지 확인
+    if (parts.length !== 2) {
+        return null;
+    }
+    
+    // 각 부분을 숫자로 변환
+    const lat = parseFloat(parts[0].trim());
+    const lng = parseFloat(parts[1].trim());
+    
+    // 유효한 숫자인지 확인
+    if (isNaN(lat) || isNaN(lng)) {
+        return null;
+    }
+    
+    // 위경도 범위 확인
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        return null;
+    }
+    
+    return { lat, lng };
+}
+
+// 임시 마커 버튼 이벤트 핸들러
+function setupTempMarkerControls() {
+    const coordsInput = document.getElementById('coordsInput');
+    const tempMarkerBtn = document.getElementById('tempMarkerBtn');
+    
+    if (!coordsInput || !tempMarkerBtn) {
+        console.error('임시 마커 컨트롤 요소를 찾을 수 없습니다.');
+        return;
+    }
+    
+    tempMarkerBtn.addEventListener('click', function() {
+        const hasMarker = TempMarkerManager.hasTempMarker();
+        
+        if (hasMarker) {
+            // 마커가 있으면 삭제
+            TempMarkerManager.removeTempMarker();
+            tempMarkerBtn.textContent = '생성';
+        } else {
+            // 마커가 없으면 생성
+            const input = coordsInput.value;
+            const coords = parseCoordinates(input);
+            
+            if (!coords) {
+                alert('올바른 위경도 형식을 입력해주세요.\n예시: 37.494171, 127.115751');
+                return;
+            }
+            
+            try {
+                TempMarkerManager.createTempMarker(coords.lat, coords.lng);
+                tempMarkerBtn.textContent = '지우기';
+            } catch (error) {
+                console.error('임시 마커 생성 중 오류:', error);
+                alert('임시 마커 생성 중 오류가 발생했습니다.');
+            }
+        }
+    });
+    
+    // 엔터 키로도 실행 가능
+    coordsInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            tempMarkerBtn.click();
+        }
+    });
+}

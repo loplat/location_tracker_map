@@ -1,3 +1,27 @@
+// 색상을 어둡게 만드는 헬퍼 함수
+function darkenColor(hex, percent) {
+    if (!hex || typeof hex !== 'string') return '#000000';
+    hex = hex.replace('#', '');
+
+    let r = parseInt(hex.substring(0, 2), 16);
+    let g = parseInt(hex.substring(2, 4), 16);
+    let b = parseInt(hex.substring(4, 6), 16);
+
+    r = parseInt(r * (100 - percent) / 100);
+    g = parseInt(g * (100 - percent) / 100);
+    b = parseInt(b * (100 - percent) / 100);
+
+    r = (r < 0) ? 0 : r;
+    g = (g < 0) ? 0 : g;
+    b = (b < 0) ? 0 : b;
+
+    const rr = ((r.toString(16).length === 1) ? '0' + r.toString(16) : r.toString(16));
+    const gg = ((g.toString(16).length === 1) ? '0' + g.toString(16) : g.toString(16));
+    const bb = ((b.toString(16).length === 1) ? '0' + b.toString(16) : b.toString(16));
+
+    return `#${rr}${gg}${bb}`;
+}
+
 // 지도 API 공통 인터페이스
 const MapApiFactory = {
     createLeafletApi: (map) => ({
@@ -11,6 +35,7 @@ const MapApiFactory = {
                 fillOpacity: 0.8
             });
             marker.on('mouseover', function (e) {
+                L.DomEvent.stopPropagation(e);
                 clearPopup();
                 const popupContent = createPopupContent(location, groupName);
                 currentPopup = L.popup({ closeButton: false, className: 'info-popup' })
@@ -22,19 +47,26 @@ const MapApiFactory = {
             return marker;
         },
         createPath: (locations, color) => {
-            const pathCoords = locations.map(loc => [loc.lat, loc.lng]);
-            const polyline = L.polyline(pathCoords, { color: color, weight: 4, opacity: 0.8 });
-            const layers = [polyline];
+            const layers = [];
+            const numSegments = locations.length - 1;
+            if (numSegments < 1) return [];
 
-            // 경로 세그먼트에 대한 호버 이벤트 추가
-            for (let i = 0; i < locations.length - 1; i++) {
+            // 경로를 시간 순으로 어두워지게 표시
+            for (let i = 0; i < numSegments; i++) {
                 const start = locations[i];
                 const end = locations[i + 1];
                 const segmentCoords = [[start.lat, start.lng], [end.lat, end.lng]];
-                const segment = L.polyline(segmentCoords, { color: color, weight: 8, opacity: 0 });
+                
+                const darknessPercent = (i / numSegments) * 60; // 최대 60%까지 어둡게
+                const segmentColor = darkenColor(color, darknessPercent);
 
+                const segment = L.polyline(segmentCoords, { color: segmentColor, weight: 4, opacity: 0.8 });
+                layers.push(segment);
+
+                // 호버 이벤트를 위한 보이지 않는 두꺼운 선
+                const hoverSegment = L.polyline(segmentCoords, { color: segmentColor, weight: 10, opacity: 0 });
                 const pathInfo = calculatePathInfo(start, end);
-                segment.on('mouseover', function (e) {
+                hoverSegment.on('mouseover', function (e) {
                     clearPopup();
                     const popupContent = createPathPopupContent(pathInfo);
                     currentPopup = L.popup({ closeButton: false, className: 'info-popup' })
@@ -42,18 +74,20 @@ const MapApiFactory = {
                         .setContent(popupContent)
                         .openOn(map);
                 });
-                segment.on('mouseout', clearPopup);
-                layers.push(segment);
+                hoverSegment.on('mouseout', clearPopup);
+                layers.push(hoverSegment);
             }
 
-            const decorator = L.polylineDecorator(polyline, {
+            // 경로 방향을 나타내는 화살표 데코레이터
+            const pathCoords = locations.map(loc => [loc.lat, loc.lng]);
+            const decorator = L.polylineDecorator(pathCoords, {
                 patterns: [{
                     offset: 25,
                     repeat: 100,
                     symbol: L.Symbol.arrowHead({
                         pixelSize: 12,
                         polygon: false,
-                        pathOptions: { stroke: true, weight: 2, color: color }
+                        pathOptions: { stroke: true, weight: 2, color: color } // 화살표는 기본 색상 유지
                     })
                 }]
             });
@@ -136,32 +170,50 @@ const MapApiFactory = {
             return marker;
         },
         createPath: (locations, color) => {
-            const pathCoords = locations.map(loc => new naver.maps.LatLng(loc.lat, loc.lng));
-            const polyline = new naver.maps.Polyline({
-                map: naverMap,
-                path: pathCoords,
-                strokeColor: color,
-                strokeWeight: 4,
-                strokeOpacity: 0.8
-            });
+            const layers = [];
+            const numSegments = locations.length - 1;
+            if (numSegments < 1) return [];
 
-            naver.maps.Event.addListener(polyline, 'mousemove', (e) => {
-                clearPopup();
-                const popupContent = `<div class="info-popup" style="padding:10px;"><h4>🛣️ 경로 정보</h4><div>경로 위에 마우스를 올렸습니다.</div></div>`;
-                currentPopup = new naver.maps.InfoWindow({
-                    content: popupContent,
-                    position: e.coord,
-                    borderWidth: 0,
-                    backgroundColor: 'transparent',
-                    disableAnchor: true,
+            // 경로를 시간 순으로 어두워지게 표시
+            for (let i = 0; i < numSegments; i++) {
+                const start = locations[i];
+                const end = locations[i + 1];
+                const segmentCoords = [
+                    new naver.maps.LatLng(start.lat, start.lng),
+                    new naver.maps.LatLng(end.lat, end.lng)
+                ];
+                
+                const darknessPercent = (i / numSegments) * 60; // 최대 60%까지 어둡게
+                const segmentColor = darkenColor(color, darknessPercent);
+
+                const segment = new naver.maps.Polyline({
+                    map: naverMap,
+                    path: segmentCoords,
+                    strokeColor: segmentColor,
+                    strokeWeight: 4,
+                    strokeOpacity: 0.8
                 });
-                currentPopup.open(naverMap);
-            });
-            naver.maps.Event.addListener(polyline, 'mouseout', () => {
-                clearPopup();
-            });
+                
+                const pathInfo = calculatePathInfo(start, end);
+                naver.maps.Event.addListener(segment, 'mousemove', (e) => {
+                    clearPopup();
+                    const popupContent = createPathPopupContent(pathInfo);
+                    currentPopup = new naver.maps.InfoWindow({
+                        content: popupContent,
+                        position: e.coord,
+                        borderWidth: 0,
+                        backgroundColor: 'transparent',
+                        disableAnchor: true,
+                    });
+                    currentPopup.open(naverMap);
+                });
+                naver.maps.Event.addListener(segment, 'mouseout', () => {
+                    clearPopup();
+                });
 
-            return [polyline];
+                layers.push(segment);
+            }
+            return layers;
         },
         addLayers: (layers) => layers.forEach(layer => layer.setMap(naverMap)),
         removeLayers: (layers) => layers.forEach(layer => layer.setMap(null)),
@@ -222,10 +274,18 @@ const MapApiFactory = {
 // 팝업 내용 생성 공통 함수
 function createPopupContent(location, groupName) {
     const detailsHtml = location.headers.map((header, idx) => {
-        const value = location.convertedData ? location.convertedData[idx] : location.rawData[idx];
+        let value = location.convertedData ? location.convertedData[idx] : location.rawData[idx];
+        if (value && value.toString().length > 100) {
+            value = value.toString().substring(0, 100) + '...';
+        }
         return (value && value.toString().trim()) ?
             `<div class="detail-row"><span class="label">${header}:</span><span class="value">${value}</span></div>` : '';
     }).join('');
+
+    if (groupName && groupName.length > 100) {
+        groupName = groupName.substring(0, 100) + '...';
+    }
+
     return `<div class="info-popup"><h4>📍 위치 정보 (Row ${location.rowIndex})</h4>${detailsHtml}<div class="detail-row"><span class="label">그룹:</span><span class="value">${groupName}</span></div></div>`;
 }
 
@@ -247,6 +307,93 @@ function calculatePathInfo(start, end) {
 
     return { distance, timeDiff: timeDiffFormatted, speed };
 }
+
+// 임시 마커 관리
+let tempMarker = null;
+
+// 임시 마커 생성/삭제 기능 추가
+const TempMarkerManager = {
+    createTempMarker: (lat, lng) => {
+        const mapApi = getMapApi();
+        
+        // 기존 임시 마커 제거
+        if (tempMarker) {
+            TempMarkerManager.removeTempMarker();
+        }
+        
+        const location = { lat: parseFloat(lat), lng: parseFloat(lng) };
+        const color = '#FF0000'; // 빨간색으로 구분
+        
+        if (mapProvider === 'osm') {
+            tempMarker = L.circleMarker([location.lat, location.lng], {
+                radius: 12,
+                fillColor: color,
+                color: '#fff',
+                weight: 3,
+                opacity: 1,
+                fillOpacity: 0.9
+            });
+            
+            const popupContent = `<div class="info-popup"><h4>📍 임시 마커</h4>
+                <div class="detail-row"><span class="label">위도:</span><span class="value">${lat}</span></div>
+                <div class="detail-row"><span class="label">경도:</span><span class="value">${lng}</span></div>
+            </div>`;
+            
+            tempMarker.bindPopup(popupContent);
+            tempMarker.addTo(map);
+        } else {
+            tempMarker = new naver.maps.Marker({
+                position: new naver.maps.LatLng(location.lat, location.lng),
+                map: naverMap,
+                icon: {
+                    content: `<div style="background-color:${color}; width:24px; height:24px; border-radius:50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+                    anchor: new naver.maps.Point(12, 12)
+                }
+            });
+            
+            const popupContent = `<div class="info-popup"><h4>📍 임시 마커</h4>
+                <div class="detail-row"><span class="label">위도:</span><span class="value">${lat}</span></div>
+                <div class="detail-row"><span class="label">경도:</span><span class="value">${lng}</span></div>
+            </div>`;
+            
+            const infoWindow = new naver.maps.InfoWindow({
+                content: popupContent,
+                borderWidth: 0,
+                backgroundColor: 'transparent',
+                disableAnchor: true,
+                pixelOffset: new naver.maps.Point(0, -20)
+            });
+            
+            naver.maps.Event.addListener(tempMarker, 'click', () => {
+                infoWindow.open(naverMap, tempMarker);
+            });
+        }
+        
+        // 임시 마커로 지도 중심 이동
+        if (mapProvider === 'osm') {
+            map.setView([location.lat, location.lng], map.getZoom());
+        } else {
+            naverMap.setCenter(new naver.maps.LatLng(location.lat, location.lng));
+        }
+        
+        return tempMarker;
+    },
+    
+    removeTempMarker: () => {
+        if (tempMarker) {
+            if (mapProvider === 'osm') {
+                map.removeLayer(tempMarker);
+            } else {
+                tempMarker.setMap(null);
+            }
+            tempMarker = null;
+        }
+    },
+    
+    hasTempMarker: () => {
+        return tempMarker !== null;
+    }
+};
 
 // 지도 API 어댑터 (리팩토링됨)
 function getMapApi() {

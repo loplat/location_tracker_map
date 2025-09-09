@@ -51,6 +51,11 @@ function isEmptyRow(row) {
 
 // 거리 계산 함수 (Haversine formula)
 function calculateDistance(lat1, lon1, lat2, lon2) {
+    if (isNaN(lat1) || isNaN(lon1) || isNaN(lat2) || isNaN(lon2)) {
+        console.error('Invalid coordinates:', { lat1, lon1, lat2, lon2 });
+        return NaN;
+    }
+    
     const R = 6371; // 지구 반지름 (km)
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -63,8 +68,20 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 
 // 시간 차이 계산 함수
 function calculateTimeDiff(time1, time2, returnMinutes = false) {
-    const diff = Math.abs(new Date(time2) - new Date(time1)); // ms
-    if (returnMinutes) return diff / (1000 * 60);
+    const date1 = new Date(time1);
+    const date2 = new Date(time2);
+    
+    if (isNaN(date1.getTime()) || isNaN(date2.getTime())) {
+        console.error('Invalid dates:', { time1, time2, date1, date2 });
+        return returnMinutes ? NaN : 'N/A';
+    }
+    
+    const diff = Math.abs(date2 - date1); // ms
+    
+    if (returnMinutes) {
+        const minutes = diff / (1000 * 60);
+        return minutes;
+    }
 
     const hours = Math.floor(diff / (1000 * 60 * 60));
     const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -140,7 +157,7 @@ function findColumnIndex(headers, keywords, exact = false) {
     for (const keyword of keywords) {
         const index = headers.findIndex(h => {
             if (!h) return false;
-            const headerText = h.toString().toLowerCase().replace(/[\s_]/g, '');
+            const headerText = h.toString().toLowerCase().replace(/\s/g, '');
             return exact ? headerText === keyword : headerText.includes(keyword);
         });
         if (index !== -1) return index;
@@ -279,6 +296,9 @@ document.addEventListener('DOMContentLoaded', function () {
     document.getElementById('addGroupLevel').addEventListener('click', () => addGroupSelector());
     document.getElementById('pathToggle').addEventListener('click', togglePaths);
     document.getElementById('mapProviderToggle').addEventListener('click', toggleMapProvider);
+    
+    // 임시 마커 컨트롤 설정
+    setupTempMarkerControls();
 
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => switchTab(btn.dataset.tab));

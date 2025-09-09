@@ -58,7 +58,8 @@ body {
 }
 
 input[type="file"],
-input[type="url"] {
+input[type="url"],
+input[type="text"] {
     padding: 12px;
     border: 2px solid #e0e6ed;
     border-radius: 10px;
@@ -68,7 +69,8 @@ input[type="url"] {
 }
 
 input[type="file"]:focus,
-input[type="url"]:focus {
+input[type="url"]:focus,
+input[type="text"]:focus {
     outline: none;
     border-color: #667eea;
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);

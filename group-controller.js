@@ -608,8 +608,8 @@ function displayDataAsGroups(groupColumns, sourceData) {
             }
         }
 
-        mapApi.fitBounds(visibleLocations);
+        // mapApi.fitBounds(visibleLocations); // 사용자가 원하지 않는 확대/축소 방지
     }
 
     createGroupControls(hierarchicalData);
-} 
+}

@@ -68,7 +68,19 @@ function convertLocationData(row, headers, dateIndex, timeIndex, tsIndex, latInd
         time = kst.time;
     }
 
-    const timestamp = tsIndex !== -1 ? row[tsIndex] : `${date} ${time}`;
+    let timestamp;
+    if (tsIndex !== -1) {
+        const tsValue = row[tsIndex];
+        // tsValue가 Excel Serial Date 형태의 숫자인지 확인
+        if (typeof tsValue === 'number' && tsValue > 40000) {
+            const kst = convertToKST(excelSerialDateToJSDate(tsValue));
+            timestamp = `${kst.date} ${kst.time}`;
+        } else {
+            timestamp = tsValue;
+        }
+    } else {
+        timestamp = `${date} ${time}`;
+    }
 
     // 변환된 데이터를 저장할 객체 생성
     const convertedData = [...row];
@@ -178,6 +190,8 @@ function handleUrlLoad() {
 
 // 공통 데이터 처리 함수들
 function validateRequiredColumns(headers, sheetName, isGeofence = false) {
+    const wpslatIndex = findColumnIndex(headers, ['wps_lat']);
+    const wpslngIndex = findColumnIndex(headers, ['wps_lng']);
     const latIndex = findColumnIndex(headers, ['lat', 'latitude', '위도']);
     const lngIndex = findColumnIndex(headers, ['lng', 'longitude', '경도']);
 
@@ -191,14 +205,21 @@ function validateRequiredColumns(headers, sheetName, isGeofence = false) {
         return { valid: true, latIndex, lngIndex, radiusIndex };
     }
 
-    const tsIndex = findColumnIndex(headers, ['tslocal', 'timestamp', 'datetime']);
+    const tsIndex = findColumnIndex(headers, ['time', 'tslocal', 'timestamp', 'datetime']);
     const dateIndex = findColumnIndex(headers, ['date', 'day', '날짜']);
     const timeIndex = findColumnIndex(headers, ['time', '시간']);
+
+
+    // tsIndex가 없고, dateIndex없이 timeIndex만 있으면 timeIndex 사용
+    if (tsIndex === -1 && dateIndex === -1 && timeIndex !== -1) {
+        tsIndex = timeIndex;
+    }
 
     const hasTimestamp = tsIndex !== -1 || (dateIndex !== -1 && timeIndex !== -1);
 
     if (!hasTimestamp || latIndex === -1 || lngIndex === -1) {
         const errorMsg = `필수 컬럼(시간, 위도, 경도)을 찾을 수 없습니다. [ts_local/timestamp/datetime] 또는 [date/날짜]와 [time/시간] 조합, 그리고 [lat/latitude/위도], [lng/longitude/경도] 중 하나를 포함해야 합니다.`;
+        console.error(`hasTimestamp: ${hasTimestamp}, latIndex: ${latIndex}, lngIndex: ${lngIndex}`);
         console.error(`Could not find required columns in sheet: ${sheetName}`);
         return { valid: false, error: errorMsg };
     }
@@ -209,13 +230,15 @@ function validateRequiredColumns(headers, sheetName, isGeofence = false) {
         dateIndex,
         timeIndex,
         latIndex,
-        lngIndex
+        lngIndex,
+        wpslatIndex,
+        wpslngIndex
     };
 }
 
 function processSheetData(sheetData, columnIndices, sheetName) {
     const headers = sheetData[0];
-    const { tsIndex, dateIndex, timeIndex, latIndex, lngIndex } = columnIndices;
+    const { tsIndex, dateIndex, timeIndex, latIndex, lngIndex, wpslatIndex, wpslngIndex } = columnIndices;
 
     return sheetData.slice(1)
         .map((row, index) => {
@@ -231,7 +254,19 @@ function processSheetData(sheetData, columnIndices, sheetName) {
                 time = kst.time;
             }
 
-            const timestamp = tsIndex !== -1 ? row[tsIndex] : `${date} ${time}`;
+            let timestamp;
+            if (tsIndex !== -1) {
+                const tsValue = row[tsIndex];
+                // tsValue가 Excel Serial Date 형태의 숫자인지 확인
+                if (typeof tsValue === 'number' && tsValue > 40000) {
+                    const kst = convertToKST(excelSerialDateToJSDate(tsValue));
+                    timestamp = `${kst.date} ${kst.time}`;
+                } else {
+                    timestamp = tsValue;
+                }
+            } else {
+                timestamp = `${date} ${time}`;
+            }
 
             // 변환된 데이터를 저장할 배열 생성
             const convertedData = [...row];
@@ -248,12 +283,17 @@ function processSheetData(sheetData, columnIndices, sheetName) {
             convertedData[dateIndex] = date;
             convertedData[timeIndex] = time;
 
+            lat = !Number.isNaN(parseFloat(row[wpslatIndex])) ? parseFloat(row[wpslatIndex]) : parseFloat(row[latIndex])
+            lng = !Number.isNaN(parseFloat(row[wpslngIndex])) ? parseFloat(row[wpslngIndex]) : parseFloat(row[lngIndex])
+
+            console.log('lat:' + lat + ', lng:' + lng)
+
             return {
                 timestamp: timestamp,
                 date: date,
                 time: time,
-                lat: parseFloat(row[latIndex]),
-                lng: parseFloat(row[lngIndex]),
+                lat: !Number.isNaN(parseFloat(row[wpslatIndex])) ? parseFloat(row[wpslatIndex]) : parseFloat(row[latIndex]),
+                lng: !Number.isNaN(parseFloat(row[wpslngIndex])) ? parseFloat(row[wpslngIndex]) : parseFloat(row[lngIndex]),
                 rawData: row,
                 convertedData: convertedData,
                 headers: headers,
@@ -331,18 +371,16 @@ function parseGeofenceData(data) {
     const lowerHeaders = headers.map(h => h.toString().toLowerCase().replace(/[\s_]/g, ''));
 
     // Find indices for all possible columns
-    const shapeTypeIndex = findColumnIndex(lowerHeaders, ['shapetype']);
-    const polygonIndex = findColumnIndex(lowerHeaders, ['polygon']);
+    const shapeTypeIndex = findColumnIndex(lowerHeaders, ['shape_type', '지오펜스유형']);
+    const polygonIndex = findColumnIndex(lowerHeaders, ['polygon', '폴리곤']);
     const latIndex = findColumnIndex(lowerHeaders, ['lat', 'latitude', '위도']);
     const lngIndex = findColumnIndex(lowerHeaders, ['lng', 'longitude', '경도']);
     const radiusIndex = findColumnIndex(lowerHeaders, ['radius', '반경']);
 
     return data.slice(1).map(row => {
-        let shapeType = 'circle'; // Default to circle
-        if (shapeTypeIndex !== -1 && row[shapeTypeIndex]) {
-            shapeType = row[shapeTypeIndex].toLowerCase();
-        } else if (polygonIndex !== -1 && row[polygonIndex]) {
-            shapeType = 'polygon';
+        let shapeType = 'polygon'; // Default to polygon
+        if (shapeTypeIndex !== -1 && row[shapeTypeIndex] === '1') {
+            shapeType = 'circle';
         }
 
         if (shapeType === 'polygon') {
@@ -350,12 +388,8 @@ function parseGeofenceData(data) {
             const wkt = row[polygonIndex];
             if (!wkt || typeof wkt !== 'string') return null;
 
-            console.log(wkt)
-
             const coordStringMatch = wkt.match(/\(\(\((.*)\)\)\)/);
             if (!coordStringMatch || !coordStringMatch[1]) return null;
-
-            console.log(coordStringMatch)
 
             const coords = coordStringMatch[1].split(',').map(pair => {
                 const [lng, lat] = pair.trim().split(' ').map(Number);
